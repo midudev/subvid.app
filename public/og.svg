@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">subvid.app  AI subtitles for any video</title>
+  <desc id="desc">Generate, edit and translate subtitles locally in your browser.</desc>
+  <defs>
+    <radialGradient id="aurora-a" cx="18%" cy="18%" r="70%">
+      <stop offset="0" stop-color="#b8f060" stop-opacity="0.72"/>
+      <stop offset="0.44" stop-color="#44d7b6" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#06080b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aurora-b" cx="78%" cy="22%" r="65%">
+      <stop offset="0" stop-color="#8b5cf6" stop-opacity="0.68"/>
+      <stop offset="0.52" stop-color="#38bdf8" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#06080b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="card" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#151a24"/>
+      <stop offset="1" stop-color="#0b0f17"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="30" stdDeviation="28" flood-color="#000" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="630" fill="#06080b"/>
+  <rect width="1200" height="630" fill="url(#aurora-a)"/>
+  <rect width="1200" height="630" fill="url(#aurora-b)"/>
+  <g opacity="0.18">
+    <path d="M0 468 C180 412 286 512 462 455 C640 397 760 299 1200 346" fill="none" stroke="#fff" stroke-width="2"/>
+    <path d="M0 512 C220 470 370 586 548 515 C768 427 916 447 1200 394" fill="none" stroke="#b8f060" stroke-width="2"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="74" y="74" width="1052" height="482" rx="38" fill="url(#card)" stroke="#273041"/>
+    <rect x="110" y="112" width="264" height="34" rx="17" fill="#111827" stroke="#2a3344"/>
+    <circle cx="134" cy="129" r="6" fill="#b8f060"/>
+    <text x="152" y="136" fill="#d8f7aa" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">100% in your browser</text>
+    <text x="112" y="246" fill="#f7f8fb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="72" font-weight="900" letter-spacing="-3">Subtitles for</text>
+    <text x="112" y="328" fill="#b8f060" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="92" font-weight="950" letter-spacing="-4">any video</text>
+    <text x="116" y="396" fill="#b9c1d0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="600">Generate, edit, translate and export subtitles with AI.</text>
+    <text x="116" y="438" fill="#7f8ca3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="500">Private by design: no uploads, no servers.</text>
+    <g transform="translate(790 160)">
+      <rect x="0" y="0" width="260" height="310" rx="28" fill="#070a10" stroke="#2a3344"/>
+      <rect x="28" y="42" width="204" height="120" rx="18" fill="#111827"/>
+      <path d="M92 82 L170 123 L92 164 Z" fill="#b8f060"/>
+      <rect x="38" y="196" width="184" height="22" rx="11" fill="#b8f060"/>
+      <rect x="62" y="232" width="136" height="18" rx="9" fill="#2a3344"/>
+      <rect x="76" y="264" width="108" height="18" rx="9" fill="#2a3344"/>
+    </g>
+  </g>
+</svg>

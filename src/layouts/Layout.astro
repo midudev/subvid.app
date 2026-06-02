@@ -1,32 +1,96 @@
 ---
 import "../styles/global.css"
-import { languages, defaultLang, toLang } from "../i18n/ui"
+import { languages, defaultLang, toLang, useTranslations } from "../i18n/ui"
 
 interface Props {
   title?: string
   description?: string
+  image?: string
+  noindex?: boolean
 }
 
 const lang = toLang(Astro.currentLocale)
-const { title = "subvid.app", description } = Astro.props
+const t = useTranslations(lang)
+const {
+  title = t.meta.title,
+  description = t.meta.description,
+  image = "/og.svg",
+  noindex = false,
+} = Astro.props
 
+const site = Astro.site ?? new URL("https://subvid.app")
 const localePath = (code: string) => (code === defaultLang ? "/" : `/${code}/`)
+const absoluteUrl = (path: string) => new URL(path, site).toString()
+const canonicalUrl = absoluteUrl(localePath(lang))
+const imageUrl = absoluteUrl(image)
+const alternateLocales = Object.keys(languages).filter((code) => code !== lang)
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: t.meta.siteName,
+  applicationCategory: "MultimediaApplication",
+  operatingSystem: "Web",
+  url: canonicalUrl,
+  inLanguage: lang,
+  description,
+  image: imageUrl,
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+  author: {
+    "@type": "Person",
+    name: "midudev",
+    url: "https://midu.dev",
+  },
+  sameAs: [
+    "https://github.com/midudev/subvid.app",
+    "https://midu.dev",
+  ],
+}
 ---
 
 <!doctype html>
 <html lang={lang}>
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    {description && <meta name="description" content={description} />}
+    <meta name="theme-color" content="#06080b" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="robots" content={noindex ? "noindex, nofollow" : "index, follow, max-image-preview:large"} />
+    <meta name="description" content={description} />
+    <meta name="keywords" content={t.meta.keywords} />
+    <meta name="author" content="midudev" />
+    <link rel="canonical" href={canonicalUrl} />
     {
       Object.keys(languages).map((code) => (
-        <link rel="alternate" hreflang={code} href={localePath(code)} />
+        <link rel="alternate" hreflang={code} href={absoluteUrl(localePath(code))} />
       ))
     }
-    <link rel="alternate" hreflang="x-default" href={localePath(defaultLang)} />
+    <link rel="alternate" hreflang="x-default" href={absoluteUrl(localePath(defaultLang))} />
+    <meta property="og:site_name" content={t.meta.siteName} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:title" content={t.meta.ogTitle} />
+    <meta property="og:description" content={t.meta.ogDescription} />
+    <meta property="og:image" content={imageUrl} />
+    <meta property="og:image:alt" content={t.meta.imageAlt} />
+    <meta property="og:locale" content={t.meta.locale} />
+    {
+      alternateLocales.map((code) => {
+        const locale = useTranslations(code).meta.locale
+        return <meta property="og:locale:alternate" content={locale} />
+      })
+    }
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={t.meta.ogTitle} />
+    <meta name="twitter:description" content={t.meta.ogDescription} />
+    <meta name="twitter:image" content={imageUrl} />
+    <meta name="twitter:image:alt" content={t.meta.imageAlt} />
     <title>{title}</title>
+    <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
   </head>
   <body>
     <slot />

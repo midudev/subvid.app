@@ -26,6 +26,14 @@ export const ui = {
       title: "subvid.app — Subtitles for any video",
       description:
         "Generate and edit subtitles with AI right in your browser. No uploads, no servers.",
+      siteName: "subvid.app",
+      ogTitle: "subvid.app — AI subtitles for any video",
+      ogDescription:
+        "Generate, edit, translate and export subtitles locally in your browser with AI. Private by design: no uploads, no servers.",
+      keywords:
+        "AI subtitles, automatic subtitles, video subtitles, subtitle generator, SRT editor, browser transcription, Whisper, WebGPU",
+      locale: "en_US",
+      imageAlt: "subvid.app interface for generating subtitles in the browser",
     },
     hero: {
       badge: "Runs 100% in your browser",
@@ -230,6 +238,14 @@ export const ui = {
       title: "subvid.app — Subtítulos para cualquier vídeo",
       description:
         "Genera y edita subtítulos con IA directamente en tu navegador. Sin subidas, sin servidores.",
+      siteName: "subvid.app",
+      ogTitle: "subvid.app — Subtítulos con IA para cualquier vídeo",
+      ogDescription:
+        "Genera, edita, traduce y exporta subtítulos en tu navegador con IA. Privado por diseño: sin subidas, sin servidores.",
+      keywords:
+        "subtítulos IA, subtítulos automáticos, subtítulos para vídeo, generador de subtítulos, editor SRT, transcripción en navegador, Whisper, WebGPU",
+      locale: "es_ES",
+      imageAlt: "Interfaz de subvid.app para generar subtítulos en el navegador",
     },
     hero: {
       badge: "Funciona 100% en tu navegador",
