@@ -19,9 +19,15 @@ pnpm-debug.log*
 # environment variables
 .env
 .env.production
+.env.*
 
 # macOS-specific files
 .DS_Store
 
-# jetbrains setting folder
+# IDEs and Editors
 .idea/
+.vscode/launch.json
+
+# AI Agents & VibeCoding artifacts
+.agents/
+.claude/
