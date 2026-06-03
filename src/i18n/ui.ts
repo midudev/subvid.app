@@ -165,6 +165,10 @@ export const ui = {
         subtitles: "Subtitles ({lang})",
         count: "{n} lines · {count} tracks",
       },
+      trackHide: "Hide track",
+      trackShow: "Show track",
+      trackLock: "Lock track",
+      trackUnlock: "Unlock track",
       addLangOption: "+ Add language",
       segEmpty: "Generate subtitles to edit them here.",
       steps: {
@@ -409,6 +413,10 @@ export const ui = {
         subtitles: "Subtítulos ({lang})",
         count: "{n} líneas · {count} pistas",
       },
+      trackHide: "Ocultar pista",
+      trackShow: "Mostrar pista",
+      trackLock: "Bloquear pista",
+      trackUnlock: "Desbloquear pista",
       addLangOption: "+ Añadir idioma",
       segEmpty: "Genera subtítulos para editarlos aquí.",
       steps: {

@@ -6,6 +6,8 @@ type TimelineTrack = {
   label: string
   role?: string
   segments: any[]
+  hidden?: boolean
+  locked?: boolean
 }
 
 type CaptionTrack = {
@@ -18,12 +20,15 @@ type CaptionTrack = {
 
 type TimelineOptions = {
   ui: any
+  tt?: (path: string, vars?: Record<string, unknown>) => string
   currentSegments: () => any[]
   visibleTracks?: () => TimelineTrack[]
   activeLang?: () => string
   setActiveLang?: (lang: string) => void
   renderTabs?: () => void
   renderCaptions?: (tracks: CaptionTrack[], time: number) => void
+  toggleTrackHidden?: (lang: string) => void
+  toggleTrackLocked?: (lang: string) => void
   snapshotSegments: () => string
   pushHistory: (snapshotBefore: string) => void
   renderSegments: () => void
@@ -33,12 +38,15 @@ type TimelineOptions = {
 export function createTimelineController(options: TimelineOptions) {
   const {
     ui,
+    tt,
     currentSegments,
     visibleTracks,
     activeLang,
     setActiveLang,
     renderTabs,
     renderCaptions,
+    toggleTrackHidden,
+    toggleTrackLocked,
     snapshotSegments,
     pushHistory,
     renderSegments,
@@ -48,12 +56,18 @@ export function createTimelineController(options: TimelineOptions) {
   const TL_HEADER_H = 34
   const TL_ROW_H = 58
   const TL_SCROLL_PAD = 22
+  const SCRUB_SEEK_MIN_INTERVAL = 45
+  const SCRUB_SEEK_EPSILON = 0.025
   let tlPxPerSec = 90
   let tlDuration = 0
   let tlDrag: any = null
   let scrubbing = false
   let scrubRaf = 0
+  let scrubSeekRaf = 0
+  let scrubSeekTimer = 0
   let scrubTargetT = 0
+  let scrubResumePlayback = false
+  let lastScrubSeekAt = 0
   let playheadRaf = 0
   let phAnchorMedia = 0
   let phAnchorWall = 0
@@ -64,6 +78,10 @@ export function createTimelineController(options: TimelineOptions) {
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
+  }
+
+  function t(path: string, fallback: string, vars?: Record<string, unknown>) {
+    return tt?.(path, vars) || fallback
   }
 
   function getTracks() {
@@ -82,6 +100,10 @@ export function createTimelineController(options: TimelineOptions) {
     return getTracks().find((track) => track.lang === lang)?.segments || currentSegments()
   }
 
+  function trackForLang(lang: string) {
+    return getTracks().find((track) => track.lang === lang)
+  }
+
   function activeTrackLang() {
     return activeLang?.() || getTracks()[0]?.lang || ""
   }
@@ -90,6 +112,22 @@ export function createTimelineController(options: TimelineOptions) {
     if (!lang || activeTrackLang() === lang) return
     setActiveLang?.(lang)
     renderTabs?.()
+  }
+
+  function blurActiveEditable() {
+    const active = document.activeElement
+    if (
+      active instanceof HTMLElement &&
+      (active.matches("input, textarea") || active.isContentEditable)
+    ) {
+      active.blur()
+    }
+  }
+
+  function segmentSeekTime(seg: any) {
+    const start = Math.max(0, Number(seg?.start) || 0)
+    const end = Number.isFinite(seg?.end) ? Number(seg.end) : start + 0.5
+    return Math.min(start + 0.001, Math.max(start, end - 0.001))
   }
 
   function tlTotalDuration() {
@@ -129,16 +167,28 @@ export function createTimelineController(options: TimelineOptions) {
       const row = document.createElement("div")
       row.className = "tl-track-row"
       row.dataset.lang = track.lang
+      row.classList.toggle("is-hidden", !!track.hidden)
+      row.classList.toggle("is-locked", !!track.locked)
       row.style.top = `${trackIndex * TL_ROW_H}px`
       if (track.label) {
-        const label = document.createElement("span")
-        label.className = "tl-track-label"
-        label.textContent = track.label
-        row.appendChild(label)
+        const controls = document.createElement("div")
+        controls.className = "tl-track-controls"
+        controls.innerHTML = `
+          <button class="tl-track-btn" type="button" data-action="visibility" aria-pressed="${track.hidden ? "true" : "false"}" title="${escapeHtml(track.hidden ? t("trackShow", "Show track") : t("trackHide", "Hide track"))}" aria-label="${escapeHtml(track.hidden ? t("trackShow", "Show track") : t("trackHide", "Hide track"))}">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4Z"/><circle cx="8" cy="8" r="1.8"/></svg>
+          </button>
+          <button class="tl-track-btn" type="button" data-action="lock" aria-pressed="${track.locked ? "true" : "false"}" title="${escapeHtml(track.locked ? t("trackUnlock", "Unlock track") : t("trackLock", "Lock track"))}" aria-label="${escapeHtml(track.locked ? t("trackUnlock", "Unlock track") : t("trackLock", "Lock track"))}">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 7V5.7a3.5 3.5 0 0 1 7 0V7"/><rect x="3.5" y="7" width="9" height="6.5" rx="1.4"/></svg>
+          </button>
+          <span class="tl-track-label">${escapeHtml(track.label)}</span>
+        `
+        row.appendChild(controls)
       }
       track.segments.forEach((seg, index) => {
         const block = document.createElement("div")
         block.className = "tl-block"
+        block.classList.toggle("is-hidden", !!track.hidden)
+        block.classList.toggle("is-locked", !!track.locked)
         block.dataset.lang = track.lang
         block.dataset.index = String(index)
         block.style.left = `${seg.start * tlPxPerSec}px`
@@ -186,12 +236,70 @@ export function createTimelineController(options: TimelineOptions) {
     }
   }
 
-  function scheduleScrubSeek() {
+  function clearScrubSeekQueue() {
+    if (scrubSeekRaf) {
+      cancelAnimationFrame(scrubSeekRaf)
+      scrubSeekRaf = 0
+    }
+    if (scrubSeekTimer) {
+      window.clearTimeout(scrubSeekTimer)
+      scrubSeekTimer = 0
+    }
+  }
+
+  function setVideoTimeForScrub(time: number, force = false) {
+    const video = ui.video as HTMLVideoElement
+    const dur = tlTotalDuration()
+    const target = Math.max(0, Math.min(dur, time))
+    if (!force && Math.abs((video.currentTime || 0) - target) < SCRUB_SEEK_EPSILON)
+      return
+
+    video.currentTime = target
+    lastScrubSeekAt = performance.now()
+  }
+
+  function scheduleScrubVideoSeek(force = false) {
+    if (force) {
+      clearScrubSeekQueue()
+      setVideoTimeForScrub(scrubTargetT, true)
+      return
+    }
+    if (!scrubbing) return
+    if (ui.video.seeking) return
+    if (
+      Math.abs((ui.video.currentTime || 0) - scrubTargetT) < SCRUB_SEEK_EPSILON
+    ) {
+      return
+    }
+
+    const wait = Math.max(
+      0,
+      SCRUB_SEEK_MIN_INTERVAL - (performance.now() - lastScrubSeekAt),
+    )
+    if (wait > 0) {
+      if (!scrubSeekTimer) {
+        scrubSeekTimer = window.setTimeout(() => {
+          scrubSeekTimer = 0
+          scheduleScrubVideoSeek()
+        }, wait)
+      }
+      return
+    }
+
+    if (scrubSeekRaf) return
+    scrubSeekRaf = requestAnimationFrame(() => {
+      scrubSeekRaf = 0
+      if (!scrubbing || ui.video.seeking) return
+      setVideoTimeForScrub(scrubTargetT)
+    })
+  }
+
+  function scheduleScrubFrame() {
     if (scrubRaf) return
     scrubRaf = requestAnimationFrame(() => {
       scrubRaf = 0
-      ui.video.currentTime = scrubTargetT
-      updateCaption()
+      updateCaption(scrubTargetT)
+      scheduleScrubVideoSeek()
     })
   }
 
@@ -200,16 +308,33 @@ export function createTimelineController(options: TimelineOptions) {
     const dur = tlTotalDuration()
     const t = Math.max(0, Math.min(dur, (clientX - rect.left) / tlPxPerSec))
     scrubTargetT = t
-    if (ui.timelinePlayhead)
-      ui.timelinePlayhead.style.transform = `translate3d(${t * tlPxPerSec}px,0,0)`
-    if (ui.tlClock)
-      ui.tlClock.textContent = `${formatClock(t)} / ${formatClock(dur)}`
-    scheduleScrubSeek()
+    scheduleScrubFrame()
+  }
+
+  function beginScrub(event: PointerEvent) {
+    scrubbing = true
+    scrubResumePlayback = !ui.video.paused
+    if (scrubResumePlayback) ui.video.pause()
+    cancelAnimationFrame(playheadRaf)
+    playheadRaf = 0
+    ui.timeline?.classList.add("is-scrubbing")
+    ui.timelineTrack.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+    scrubToClientX(event.clientX)
   }
 
   function endScrub() {
     if (!scrubbing) return
     scrubbing = false
+    if (scrubRaf) {
+      cancelAnimationFrame(scrubRaf)
+      scrubRaf = 0
+    }
+    scheduleScrubVideoSeek(true)
+    updateCaption()
+    reanchorPlayhead()
+    if (scrubResumePlayback) ui.video.play().catch(() => {})
+    scrubResumePlayback = false
     ui.timeline?.classList.remove("is-scrubbing")
   }
 
@@ -225,7 +350,7 @@ export function createTimelineController(options: TimelineOptions) {
     enableExports(true)
     if (!moved) {
       activateTrack(lang)
-      ui.video.currentTime = seg.start
+      ui.video.currentTime = segmentSeekTime(seg)
       const newIndex = segments.indexOf(seg)
       highlightSegment(newIndex >= 0 ? newIndex : index, {
         lang,
@@ -328,6 +453,7 @@ export function createTimelineController(options: TimelineOptions) {
     }
     const activeLang = activeTrackLang()
     const captionTracks = tracks
+      .filter((track) => !track.hidden)
       .map((track) => {
         const segment = track.segments.find(
           (s) => current >= s.start && current <= s.end,
@@ -356,14 +482,14 @@ export function createTimelineController(options: TimelineOptions) {
     }
   }
 
+  function updateCaptionFromMediaEvent() {
+    if (!scrubbing) updateCaption()
+  }
+
   function wireTimeline() {
     ui.timelineTrack?.addEventListener("pointerdown", (event: any) => {
-      if (event.target.closest(".tl-block")) return
-      scrubbing = true
-      ui.timeline?.classList.add("is-scrubbing")
-      ui.timelineTrack.setPointerCapture?.(event.pointerId)
-      event.preventDefault()
-      scrubToClientX(event.clientX)
+      if (event.target.closest(".tl-block, .tl-track-controls")) return
+      beginScrub(event)
     })
     ui.timelineTrack?.addEventListener("pointermove", (event: any) => {
       if (scrubbing) scrubToClientX(event.clientX)
@@ -372,6 +498,10 @@ export function createTimelineController(options: TimelineOptions) {
     ui.timelineTrack?.addEventListener("pointercancel", endScrub)
 
     ui.timelineBlocks?.addEventListener("pointerdown", (event: any) => {
+      if (event.target.closest(".tl-track-controls")) {
+        event.stopPropagation()
+        return
+      }
       const block = event.target.closest(".tl-block")
       if (!block) return
       const handle = event.target.closest(".tl-handle")
@@ -380,7 +510,14 @@ export function createTimelineController(options: TimelineOptions) {
       const seg = segmentsForLang(lang)[index]
       if (!seg) return
       event.preventDefault()
+      blurActiveEditable()
       activateTrack(lang)
+      if (trackForLang(lang)?.locked) {
+        ui.video.currentTime = segmentSeekTime(seg)
+        highlightSegment(index, { lang, scrollSidebar: true })
+        updateCaption()
+        return
+      }
       tlDrag = {
         index,
         lang,
@@ -434,6 +571,18 @@ export function createTimelineController(options: TimelineOptions) {
     ui.timelineBlocks?.addEventListener("pointerup", endTimelineDrag)
     ui.timelineBlocks?.addEventListener("pointercancel", endTimelineDrag)
 
+    ui.timelineBlocks?.addEventListener("click", (event: any) => {
+      const button = event.target.closest(".tl-track-btn")
+      if (!button) return
+      event.preventDefault()
+      event.stopPropagation()
+      const row = button.closest(".tl-track-row")
+      const lang = row?.dataset.lang
+      if (!lang) return
+      if (button.dataset.action === "visibility") toggleTrackHidden?.(lang)
+      else if (button.dataset.action === "lock") toggleTrackLocked?.(lang)
+    })
+
     ui.tlPlay?.addEventListener("click", togglePlay)
     ui.video.addEventListener("click", togglePlay)
     ui.video.addEventListener("play", () => {
@@ -449,9 +598,12 @@ export function createTimelineController(options: TimelineOptions) {
       updateTimelinePlayhead()
     })
     ui.video.addEventListener("seeked", reanchorPlayhead)
+    ui.video.addEventListener("seeked", () => {
+      if (scrubbing) scheduleScrubVideoSeek()
+    })
     ui.video.addEventListener("ratechange", reanchorPlayhead)
-    ui.video.addEventListener("timeupdate", updateCaption)
-    ui.video.addEventListener("seeked", updateCaption)
+    ui.video.addEventListener("timeupdate", updateCaptionFromMediaEvent)
+    ui.video.addEventListener("seeked", updateCaptionFromMediaEvent)
 
     ui.vpMute?.addEventListener("click", () => {
       ui.video.muted = !ui.video.muted

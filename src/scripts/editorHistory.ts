@@ -4,6 +4,7 @@ type HistoryState<TSegmentsByLang> = {
   activeLang: string
   dualTrackMode?: boolean
   dualTrackLangs?: string[]
+  trackStates?: Record<string, { hidden?: boolean; locked?: boolean }>
 }
 
 type EditorHistoryOptions<TSegmentsByLang> = {

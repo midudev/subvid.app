@@ -10,6 +10,7 @@ type EditorState = {
   activeLang: string
   dualTrackMode: boolean
   dualTrackLangs: string[]
+  trackStates?: Record<string, { hidden?: boolean; locked?: boolean }>
 }
 
 type EditorSegmentsOptions = {
@@ -85,6 +86,12 @@ export function createEditorSegmentsController(options: EditorSegmentsOptions) {
     const index = Number(li.dataset.index)
     const segments = segmentsForLang(lang)
     return { lang, index, segments, seg: segments[index] }
+  }
+
+  function segmentSeekTime(seg: any) {
+    const start = Math.max(0, Number(seg?.start) || 0)
+    const end = Number.isFinite(seg?.end) ? Number(seg.end) : start + 0.5
+    return Math.min(start + 0.001, Math.max(start, end - 0.001))
   }
 
   function buildLangSelects() {
@@ -280,7 +287,7 @@ export function createEditorSegmentsController(options: EditorSegmentsOptions) {
       const { lang, index, segments, seg } = segmentFromElement(li)
       if (!seg) return
       if (event.target.closest(".seg-play")) {
-        ui.video.currentTime = seg.start
+        ui.video.currentTime = segmentSeekTime(seg)
         ui.video.play().catch(() => {})
       } else if (event.target.closest(".seg-del")) {
         const before = snapshotSegments()
@@ -290,6 +297,9 @@ export function createEditorSegmentsController(options: EditorSegmentsOptions) {
         enableExports(true)
         updateCaption()
         return
+      } else if (!event.target.closest(".seg-text, .t-input")) {
+        ui.video.currentTime = segmentSeekTime(seg)
+        updateCaption()
       }
       highlightSegment(index, { lang, scrollTimeline: true })
     })
@@ -307,8 +317,9 @@ export function createEditorSegmentsController(options: EditorSegmentsOptions) {
       setActiveLangFromElement(li)
       if (event.target.classList.contains("seg-text"))
         textEditSnapshot = snapshotSegments()
-      if (Math.abs(ui.video.currentTime - seg.start) > 0.05)
-        ui.video.currentTime = seg.start
+      const seekTime = segmentSeekTime(seg)
+      if (Math.abs(ui.video.currentTime - seekTime) > 0.05)
+        ui.video.currentTime = seekTime
       highlightSegment(index, { lang, scrollTimeline: true })
     })
 

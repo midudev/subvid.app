@@ -25,7 +25,10 @@ type VisibleTrack = {
   label: string
   role: "default" | "transcription" | "subtitles"
   segments: Segment[]
+  hidden?: boolean
+  locked?: boolean
 }
+type TrackState = { hidden?: boolean; locked?: boolean }
 
 const {
   downloads,
@@ -52,6 +55,7 @@ let orderedLangs: string[] = []
 let activeLang = ""
 let dualTrackMode = false
 let dualTrackLangs: string[] = []
+let trackStates: Record<string, TrackState> = {}
 let exporting = false
 
 const { setStage } = createStageManager({ ui })
@@ -101,6 +105,10 @@ function visibleTrackLangs() {
   return langs.filter((lang, index) => lang && langs.indexOf(lang) === index)
 }
 
+function trackState(lang: string) {
+  return trackStates[lang] || {}
+}
+
 function visibleTracks(): VisibleTrack[] {
   return visibleTrackLangs()
     .map((lang) => ({
@@ -108,13 +116,15 @@ function visibleTracks(): VisibleTrack[] {
       label: trackLabel(lang),
       role: trackRole(lang),
       segments: segmentsByLang[lang] || [],
+      hidden: !!trackState(lang).hidden,
+      locked: !!trackState(lang).locked,
     }))
     .filter((track) => track.segments.length)
 }
 
 function currentVideoSegments(): any[] {
-  const tracks = visibleTracks()
-  return tracks.length ? tracks : currentSegments()
+  const tracks = visibleTracks().filter((track) => !track.hidden)
+  return tracks.length ? tracks : []
 }
 
 function resetEditorState() {
@@ -125,6 +135,7 @@ function resetEditorState() {
   activeLang = ""
   dualTrackMode = false
   dualTrackLangs = []
+  trackStates = {}
 }
 
 function snapshotSegments() {
@@ -147,9 +158,15 @@ function syncActiveCaptionStyle() {
   subtitleStyleController?.setActiveTrack(trackRole(activeLang), activeLang)
 }
 
+function enableWordAnimationForAll() {
+  if (!ui.wordAnimation.checked) return
+  subtitleStyleController?.setWordHighlightForAll(true)
+}
+
 let editorSegmentsController: any
 const { renderTimeline, highlightSegment, updateCaption } = createTimelineController({
   ui,
+  tt,
   currentSegments,
   visibleTracks,
   activeLang: () => activeLang,
@@ -160,6 +177,26 @@ const { renderTimeline, highlightSegment, updateCaption } = createTimelineContro
   renderTabs: () => editorSegmentsController.renderTabs(),
   renderCaptions: (tracks, time) =>
     subtitleStyleController?.renderCaptions(tracks, time),
+  toggleTrackHidden: (lang) => {
+    const before = snapshotSegments()
+    trackStates[lang] = {
+      ...trackState(lang),
+      hidden: !trackState(lang).hidden,
+    }
+    pushHistory(before)
+    renderTimeline()
+    updateCaption()
+  },
+  toggleTrackLocked: (lang) => {
+    const before = snapshotSegments()
+    trackStates[lang] = {
+      ...trackState(lang),
+      locked: !trackState(lang).locked,
+    }
+    pushHistory(before)
+    renderTimeline()
+    updateCaption()
+  },
   snapshotSegments,
   pushHistory,
   renderSegments: () => editorSegmentsController.renderSegments(),
@@ -177,6 +214,7 @@ editorSegmentsController = createEditorSegmentsController({
     activeLang,
     dualTrackMode,
     dualTrackLangs,
+    trackStates,
   }),
   setActiveLang: (lang) => {
     activeLang = lang
@@ -187,6 +225,7 @@ editorSegmentsController = createEditorSegmentsController({
   },
   setSegmentsForLang: (lang, segments) => {
     segmentsByLang[lang] = segments
+    if (ui.wordAnimation.checked) subtitleStyleController?.setWordHighlightForAll(true)
   },
   trackLabel,
   translateSegments,
@@ -234,6 +273,7 @@ historyController = createEditorHistory<SegmentsByLang>({
     activeLang,
     dualTrackMode,
     dualTrackLangs,
+    trackStates,
   }),
   restoreState: (state) => {
     segmentsByLang = state.segmentsByLang || {}
@@ -243,6 +283,7 @@ historyController = createEditorHistory<SegmentsByLang>({
       activeLang = orderedLangs[0] || Object.keys(segmentsByLang)[0] || ""
     dualTrackMode = !!state.dualTrackMode
     dualTrackLangs = state.dualTrackLangs || []
+    trackStates = state.trackStates || {}
   },
   refreshButtons: (canUndo, canRedo) => {
     if (ui.undoBtn) ui.undoBtn.disabled = !canUndo
@@ -275,6 +316,8 @@ const configStageController = createConfigStageController({
     activeLang = state.activeLang
     dualTrackMode = state.dualTrackMode
     dualTrackLangs = state.dualTrackLangs
+    trackStates = {}
+    enableWordAnimationForAll()
     syncActiveCaptionStyle()
   },
   renderTabs,
