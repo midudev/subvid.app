@@ -35,13 +35,11 @@ export const ui = {
       titleFor: "for",
       titleAny: "any\u00A0video",
       sub: "Generate, edit and translate subtitles with AI. Without uploading anything to any server.",
-      dropAria: "Select or drop a video or audio file",
-      dropLabel: "Drop your video or audio",
-      dropHint:
-        "or click to browse \u00A0\u00B7\u00A0 MP4, MOV, WebM, MKV, MP3, WAV, OGG",
+      dropAria: "Select or drop a video",
+      dropLabel: "Drop your video",
+      dropHint: "or click to browse \u00A0\u00B7\u00A0 MP4, MOV, WebM, MKV",
       dropUnsupportedLabel: "File not supported",
-      dropUnsupportedHint:
-        "Use a video file (MP4, MOV, WebM, MKV) or audio file (MP3, WAV, OGG).",
+      dropUnsupportedHint: "Use a video file: MP4, MOV, WebM or MKV.",
     },
     footer: {
       developedBy: "Developed by",
@@ -308,13 +306,11 @@ export const ui = {
       titleFor: "para",
       titleAny: "cualquier\u00A0vídeo",
       sub: "Genera, edita y traduce subtítulos con IA. Sin subir nada a ningún servidor.",
-      dropAria: "Selecciona o suelta un vídeo o audio",
-      dropLabel: "Suelta tu vídeo o audio",
-      dropHint:
-        "o haz clic para buscar \u00A0\u00B7\u00A0 MP4, MOV, WebM, MKV, MP3, WAV, OGG",
+      dropAria: "Selecciona o suelta un vídeo",
+      dropLabel: "Suelta tu vídeo",
+      dropHint: "o haz clic para buscar \u00A0\u00B7\u00A0 MP4, MOV, WebM, MKV",
       dropUnsupportedLabel: "Archivo no compatible",
-      dropUnsupportedHint:
-        "Usa un archivo de vídeo (MP4, MOV, WebM, MKV) o de audio (MP3, WAV, OGG).",
+      dropUnsupportedHint: "Usa un archivo de vídeo: MP4, MOV, WebM o MKV.",
     },
     footer: {
       developedBy: "Desarrollado por",

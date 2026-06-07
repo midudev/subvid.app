@@ -44,18 +44,17 @@ const {
 });
 
 // ── State ──
-let selectedVideoFile: File | null = null;
-let videoObjectUrl = "";
-let isAudioOnlyMode = false;
-let detectedLang = "";
-let baseSegments: Segment[] = [];
-let segmentsByLang: SegmentsByLang = {};
-let orderedLangs: string[] = [];
-let activeLang = "";
-let dualTrackMode = false;
-let dualTrackLangs: string[] = [];
-let trackStates: Record<string, TrackState> = {};
-let exporting = false;
+let selectedVideoFile: File | null = null
+let videoObjectUrl = ""
+let detectedLang = ""
+let baseSegments: Segment[] = []
+let segmentsByLang: SegmentsByLang = {}
+let orderedLangs: string[] = []
+let activeLang = ""
+let dualTrackMode = false
+let dualTrackLangs: string[] = []
+let trackStates: Record<string, TrackState> = {}
+let exporting = false
 
 const { setStage } = createStageManager({ ui });
 const asrTracker = makeTransformersTracker("asr");

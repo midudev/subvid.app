@@ -29,17 +29,6 @@ function isVideoFile(file: File) {
   );
 }
 
-function isAudioFile(file: File) {
-  return (
-    file.type.startsWith("audio/") ||
-    /\.(mp3|wav|ogg|m4a|aac|flac|wma|opus)$/i.test(file.name)
-  );
-}
-
-function isMediaFile(file: File) {
-  return isVideoFile(file) || isAudioFile(file);
-}
-
 export function createUploadStageController({
   ui,
   tt,
@@ -76,17 +65,16 @@ export function createUploadStageController({
 
   function getDraggedFileSupport(dataTransfer: DataTransfer | null) {
     const [file] = Array.from(dataTransfer?.files || []);
-    if (file) return isMediaFile(file);
+    if (file) return isVideoFile(file);
 
     const [item] = Array.from(dataTransfer?.items || []).filter(
       (dataTransferItem) => dataTransferItem.kind === "file",
     );
     if (!item) return null;
-    if (item.type)
-      return item.type.startsWith("video/") || item.type.startsWith("audio/");
+    if (item.type) return item.type.startsWith("video/");
 
     const itemFile = item.getAsFile();
-    return itemFile ? isMediaFile(itemFile) : null;
+    return itemFile ? isVideoFile(itemFile) : null;
   }
 
   function clearUnsupportedTimer() {
@@ -138,13 +126,11 @@ export function createUploadStageController({
 
   function handleSelectedFile(file?: File) {
     if (!file) return;
-    if (!isMediaFile(file)) {
+    if (!isVideoFile(file)) {
       showUnsupportedFile({ persist: true });
       ui.input.value = "";
       return;
     }
-
-    const isAudio = isAudioFile(file);
 
     resetDropzoneState();
     resetTranscriptionCache();
@@ -160,12 +146,14 @@ export function createUploadStageController({
     ui.configVideo.src = videoObjectUrl;
     ui.configVideo.load();
 
-    // Hide video export options for audio-only files
+    // Hide video preview and export options for audio-only files
     if (isAudio) {
+      ui.configPreview.style.display = "none";
       ui.downloadVideoBtn.style.display = "none";
       ui.exportFormat.closest("label")?.setAttribute("style", "display: none");
       ui.exportQuality.closest("label")?.setAttribute("style", "display: none");
     } else {
+      ui.configPreview.style.display = "";
       ui.downloadVideoBtn.style.display = "";
       ui.exportFormat.closest("label")?.removeAttribute("style");
       ui.exportQuality.closest("label")?.removeAttribute("style");

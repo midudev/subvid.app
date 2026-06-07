@@ -1,4 +1,4 @@
-import { $ } from "@/scripts/dom.ts"
+import { $ } from "@/scripts/dom.ts";
 
 export const ui = {
   app: $("#app"),
@@ -11,6 +11,7 @@ export const ui = {
   input: $<HTMLInputElement>("#video-input"),
   video: $<HTMLVideoElement>("#video"),
   configVideo: $<HTMLVideoElement>("#config-video"),
+  configPreview: $("#config-preview"),
   caption: $("#caption-overlay"),
   captionGuides: $("#caption-guides"),
   videoPreview: $("#video-preview"),
@@ -91,4 +92,4 @@ export const ui = {
   tlClock: $("#tl-clock"),
   tlZoomIn: $("#tl-zoom-in"),
   tlZoomOut: $("#tl-zoom-out"),
-}
+};
