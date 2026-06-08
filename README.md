@@ -2,7 +2,7 @@
 
 # subvid.app
 
-**Generate, edit, translate, and export subtitles for any video — entirely in your browser.**
+**Generate, edit, translate, and export subtitles for any video or audio — entirely in your browser.**
 
 No uploads. No backend. No API keys.
 
@@ -26,13 +26,13 @@ No uploads. No backend. No API keys.
 
 ## What it does
 
-1. **Upload a video** — drag & drop or browse. Supports MP4, MOV, WebM, and MKV.
+1. **Upload a video or audio** — drag & drop or browse. Supports MP4, MOV, WebM, MKV, MP3, WAV, and OGG.
 2. **Configure languages** — pick the audio language (or auto-detect) and the subtitle language.
 3. **Generate subtitles** — Whisper transcribes the audio; NLLB translates when needed.
 4. **Edit in the timeline** — fix text, timing, and styling with undo/redo.
-5. **Export** — download an `.srt` file or a new video with burned-in captions.
+5. **Export** — download an `.srt` file or a new video with burned-in captions (video files only).
 
-Everything runs client-side. Your video never leaves your device.
+Everything runs client-side. Your files never leave your device.
 
 ## Features
 
@@ -44,6 +44,7 @@ Everything runs client-side. Your video never leaves your device.
   - MP4 with hard-coded subtitles (WebCodecs + [mediabunny](https://github.com/Vanilagy/mediabunny) when available; canvas + MediaRecorder as fallback)
 - **Internationalization** — English (default) and Spanish, with static pages per locale.
 - **Offline-friendly models** — AI weights are downloaded once and cached in the browser (IndexedDB).
+- **Audio-only mode** — upload MP3, WAV, or OGG files to generate subtitle files without needing video.
 
 ## Tech stack
 

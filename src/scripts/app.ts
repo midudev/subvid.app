@@ -1,34 +1,32 @@
-import {
-  hasBuiltInTranslationSupport,
-} from "@/scripts/builtInTranslate.ts"
-import { createDownloadsController } from "@/scripts/downloads.ts"
-import { createEditorHistory } from "@/scripts/editorHistory.ts"
-import { createEditorSegmentsController } from "@/scripts/editorSegments.ts"
-import { createExportModal } from "@/scripts/export/exportModal.ts"
-import { createVideoExporter } from "@/scripts/export/videoExport.ts"
-import { baseFileName, prettifyBytes } from "@/scripts/file.ts"
-import { I18N, langName, tt } from "@/scripts/i18n.ts"
-import { createStageManager } from "@/scripts/stageManager.ts"
-import { createConfigStageController } from "@/scripts/stages/configStage.ts"
-import { createEditorStageController } from "@/scripts/stages/editorStage.ts"
-import { createUploadStageController } from "@/scripts/stages/uploadStage.ts"
-import { createSubtitleStyleController } from "@/scripts/subtitleStyle.ts"
-import { createTimelineController } from "@/scripts/timeline.ts"
-import { createTransformersClient } from "@/scripts/transformersClient.ts"
-import { createTranslationService } from "@/scripts/translation.ts"
-import { ui } from "@/scripts/ui.ts"
+import { hasBuiltInTranslationSupport } from "@/scripts/builtInTranslate.ts";
+import { createDownloadsController } from "@/scripts/downloads.ts";
+import { createEditorHistory } from "@/scripts/editorHistory.ts";
+import { createEditorSegmentsController } from "@/scripts/editorSegments.ts";
+import { createExportModal } from "@/scripts/export/exportModal.ts";
+import { createVideoExporter } from "@/scripts/export/videoExport.ts";
+import { baseFileName, prettifyBytes } from "@/scripts/file.ts";
+import { I18N, langName, tt } from "@/scripts/i18n.ts";
+import { createStageManager } from "@/scripts/stageManager.ts";
+import { createConfigStageController } from "@/scripts/stages/configStage.ts";
+import { createEditorStageController } from "@/scripts/stages/editorStage.ts";
+import { createUploadStageController } from "@/scripts/stages/uploadStage.ts";
+import { createSubtitleStyleController } from "@/scripts/subtitleStyle.ts";
+import { createTimelineController } from "@/scripts/timeline.ts";
+import { createTransformersClient } from "@/scripts/transformersClient.ts";
+import { createTranslationService } from "@/scripts/translation.ts";
+import { ui } from "@/scripts/ui.ts";
 
-type Segment = { start: number; end: number; text: string }
-type SegmentsByLang = Record<string, Segment[]>
+type Segment = { start: number; end: number; text: string };
+type SegmentsByLang = Record<string, Segment[]>;
 type VisibleTrack = {
-  lang: string
-  label: string
-  role: "default" | "transcription" | "subtitles"
-  segments: Segment[]
-  hidden?: boolean
-  locked?: boolean
-}
-type TrackState = { hidden?: boolean; locked?: boolean }
+  lang: string;
+  label: string;
+  role: "default" | "transcription" | "subtitles";
+  segments: Segment[];
+  hidden?: boolean;
+  locked?: boolean;
+};
+type TrackState = { hidden?: boolean; locked?: boolean };
 
 const {
   downloads,
@@ -43,7 +41,7 @@ const {
   tt,
   prettifyBytes,
   hasBuiltInTranslationSupport,
-})
+});
 
 // ── State ──
 let selectedVideoFile: File | null = null
@@ -58,55 +56,55 @@ let dualTrackLangs: string[] = []
 let trackStates: Record<string, TrackState> = {}
 let exporting = false
 
-const { setStage } = createStageManager({ ui })
-const asrTracker = makeTransformersTracker("asr")
-const translationTracker = makeTransformersTracker("translation")
+const { setStage } = createStageManager({ ui });
+const asrTracker = makeTransformersTracker("asr");
+const translationTracker = makeTransformersTracker("translation");
 const transformersClient = createTransformersClient({
   onProgress(key, payload) {
-    if (key === "asr") asrTracker(payload)
-    else if (key === "translation") translationTracker(payload)
+    if (key === "asr") asrTracker(payload);
+    else if (key === "translation") translationTracker(payload);
   },
-})
+});
 
-let translationService: ReturnType<typeof createTranslationService>
-let historyController: ReturnType<typeof createEditorHistory<SegmentsByLang>>
-let editorStageController: ReturnType<typeof createEditorStageController>
-let subtitleStyleController: ReturnType<typeof createSubtitleStyleController>
+let translationService: ReturnType<typeof createTranslationService>;
+let historyController: ReturnType<typeof createEditorHistory<SegmentsByLang>>;
+let editorStageController: ReturnType<typeof createEditorStageController>;
+let subtitleStyleController: ReturnType<typeof createSubtitleStyleController>;
 
 const translateSegments = (
   segments: Segment[],
   sourceLang: string,
   targetLang: string,
-) => translationService.translateSegments(segments, sourceLang, targetLang)
+) => translationService.translateSegments(segments, sourceLang, targetLang);
 
 function currentSegments(): Segment[] {
-  return segmentsByLang[activeLang] || []
+  return segmentsByLang[activeLang] || [];
 }
 
 function trackLabel(lang: string) {
   if (dualTrackMode && lang === detectedLang)
-    return tt("tracks.transcription", { lang: langName(lang) })
+    return tt("tracks.transcription", { lang: langName(lang) });
   if (dualTrackMode && dualTrackLangs.includes(lang))
-    return tt("tracks.subtitles", { lang: langName(lang) })
-  return langName(lang)
+    return tt("tracks.subtitles", { lang: langName(lang) });
+  return langName(lang);
 }
 
 function trackRole(lang: string): VisibleTrack["role"] {
-  if (dualTrackMode && lang === detectedLang) return "transcription"
-  if (dualTrackMode && dualTrackLangs.includes(lang)) return "subtitles"
-  return "default"
+  if (dualTrackMode && lang === detectedLang) return "transcription";
+  if (dualTrackMode && dualTrackLangs.includes(lang)) return "subtitles";
+  return "default";
 }
 
 function visibleTrackLangs() {
   const langs =
     dualTrackMode && dualTrackLangs.includes(activeLang)
       ? dualTrackLangs
-      : [activeLang]
-  return langs.filter((lang, index) => lang && langs.indexOf(lang) === index)
+      : [activeLang];
+  return langs.filter((lang, index) => lang && langs.indexOf(lang) === index);
 }
 
 function trackState(lang: string) {
-  return trackStates[lang] || {}
+  return trackStates[lang] || {};
 }
 
 function visibleTracks(): VisibleTrack[] {
@@ -119,89 +117,90 @@ function visibleTracks(): VisibleTrack[] {
       hidden: !!trackState(lang).hidden,
       locked: !!trackState(lang).locked,
     }))
-    .filter((track) => track.segments.length)
+    .filter((track) => track.segments.length);
 }
 
 function currentVideoSegments(): any[] {
-  const tracks = visibleTracks().filter((track) => !track.hidden)
-  return tracks.length ? tracks : []
+  const tracks = visibleTracks().filter((track) => !track.hidden);
+  return tracks.length ? tracks : [];
 }
 
 function resetEditorState() {
-  detectedLang = ""
-  baseSegments = []
-  segmentsByLang = {}
-  orderedLangs = []
-  activeLang = ""
-  dualTrackMode = false
-  dualTrackLangs = []
-  trackStates = {}
+  detectedLang = "";
+  baseSegments = [];
+  segmentsByLang = {};
+  orderedLangs = [];
+  activeLang = "";
+  dualTrackMode = false;
+  dualTrackLangs = [];
+  trackStates = {};
 }
 
 function snapshotSegments() {
-  return historyController.snapshotSegments()
+  return historyController.snapshotSegments();
 }
 
 function pushHistory(snapshotBefore: string) {
-  historyController.pushHistory(snapshotBefore)
+  historyController.pushHistory(snapshotBefore);
 }
 
 function resetHistory() {
-  historyController.resetHistory()
+  historyController.resetHistory();
 }
 
 function enableExports(on: boolean) {
-  editorStageController.enableExports(on)
+  editorStageController.enableExports(on);
 }
 
 function syncActiveCaptionStyle() {
-  subtitleStyleController?.setActiveTrack(trackRole(activeLang), activeLang)
+  subtitleStyleController?.setActiveTrack(trackRole(activeLang), activeLang);
 }
 
 function enableWordAnimationForAll() {
-  if (!ui.wordAnimation.checked) return
-  subtitleStyleController?.setWordHighlightForAll(true)
+  if (!ui.wordAnimation.checked) return;
+  subtitleStyleController?.setWordHighlightForAll(true);
 }
 
-let editorSegmentsController: any
-const { renderTimeline, highlightSegment, updateCaption } = createTimelineController({
-  ui,
-  tt,
-  currentSegments,
-  visibleTracks,
-  activeLang: () => activeLang,
-  setActiveLang: (lang) => {
-    activeLang = lang
-    syncActiveCaptionStyle()
-  },
-  renderTabs: () => editorSegmentsController.renderTabs(),
-  renderCaptions: (tracks, time) =>
-    subtitleStyleController?.renderCaptions(tracks, time),
-  toggleTrackHidden: (lang) => {
-    const before = snapshotSegments()
-    trackStates[lang] = {
-      ...trackState(lang),
-      hidden: !trackState(lang).hidden,
-    }
-    pushHistory(before)
-    renderTimeline()
-    updateCaption()
-  },
-  toggleTrackLocked: (lang) => {
-    const before = snapshotSegments()
-    trackStates[lang] = {
-      ...trackState(lang),
-      locked: !trackState(lang).locked,
-    }
-    pushHistory(before)
-    renderTimeline()
-    updateCaption()
-  },
-  snapshotSegments,
-  pushHistory,
-  renderSegments: () => editorSegmentsController.renderSegments(),
-  enableExports,
-})
+let editorSegmentsController: any;
+const { renderTimeline, highlightSegment, updateCaption } =
+  createTimelineController({
+    ui,
+    tt,
+    currentSegments,
+    visibleTracks,
+    activeLang: () => activeLang,
+    setActiveLang: (lang) => {
+      activeLang = lang;
+      syncActiveCaptionStyle();
+    },
+    renderTabs: () => editorSegmentsController.renderTabs(),
+    renderCaptions: (tracks, time) =>
+      subtitleStyleController?.renderCaptions(tracks, time),
+    toggleTrackHidden: (lang) => {
+      const before = snapshotSegments();
+      trackStates[lang] = {
+        ...trackState(lang),
+        hidden: !trackState(lang).hidden,
+      };
+      pushHistory(before);
+      renderTimeline();
+      updateCaption();
+    },
+    toggleTrackLocked: (lang) => {
+      const before = snapshotSegments();
+      trackStates[lang] = {
+        ...trackState(lang),
+        locked: !trackState(lang).locked,
+      };
+      pushHistory(before);
+      renderTimeline();
+      updateCaption();
+    },
+    snapshotSegments,
+    pushHistory,
+    renderSegments: () => editorSegmentsController.renderSegments(),
+    enableExports,
+  });
 editorSegmentsController = createEditorSegmentsController({
   ui,
   tt,
@@ -217,15 +216,16 @@ editorSegmentsController = createEditorSegmentsController({
     trackStates,
   }),
   setActiveLang: (lang) => {
-    activeLang = lang
-    syncActiveCaptionStyle()
+    activeLang = lang;
+    syncActiveCaptionStyle();
   },
   setOrderedLangs: (langs) => {
-    orderedLangs = langs
+    orderedLangs = langs;
   },
   setSegmentsForLang: (lang, segments) => {
-    segmentsByLang[lang] = segments
-    if (ui.wordAnimation.checked) subtitleStyleController?.setWordHighlightForAll(true)
+    segmentsByLang[lang] = segments;
+    if (ui.wordAnimation.checked)
+      subtitleStyleController?.setWordHighlightForAll(true);
   },
   trackLabel,
   translateSegments,
@@ -235,7 +235,7 @@ editorSegmentsController = createEditorSegmentsController({
   highlightSegment,
   updateCaption,
   enableExports,
-})
+});
 const {
   addLanguage,
   buildLangSelects,
@@ -244,16 +244,16 @@ const {
   renderTabs,
   setLangAddStatus,
   wireSegmentEditor,
-} = editorSegmentsController
-subtitleStyleController = createSubtitleStyleController({ ui, I18N })
+} = editorSegmentsController;
+subtitleStyleController = createSubtitleStyleController({ ui, I18N });
 const {
   applyCaptionStyle,
   renderPresets,
   syncStyleControls,
   wireStyleControls,
-} = subtitleStyleController
-const exportModal = createExportModal({ ui, tt, isExporting: () => exporting })
-const { closeExportModal } = exportModal
+} = subtitleStyleController;
+const exportModal = createExportModal({ ui, tt, isExporting: () => exporting });
+const { closeExportModal } = exportModal;
 
 editorStageController = createEditorStageController({
   ui,
@@ -264,7 +264,7 @@ editorStageController = createEditorStageController({
   setStage,
   undo: () => historyController.undo(),
   redo: () => historyController.redo(),
-})
+});
 
 historyController = createEditorHistory<SegmentsByLang>({
   getState: () => ({
@@ -276,27 +276,27 @@ historyController = createEditorHistory<SegmentsByLang>({
     trackStates,
   }),
   restoreState: (state) => {
-    segmentsByLang = state.segmentsByLang || {}
-    orderedLangs = state.orderedLangs || Object.keys(segmentsByLang)
-    activeLang = state.activeLang || orderedLangs[0] || ""
+    segmentsByLang = state.segmentsByLang || {};
+    orderedLangs = state.orderedLangs || Object.keys(segmentsByLang);
+    activeLang = state.activeLang || orderedLangs[0] || "";
     if (!segmentsByLang[activeLang])
-      activeLang = orderedLangs[0] || Object.keys(segmentsByLang)[0] || ""
-    dualTrackMode = !!state.dualTrackMode
-    dualTrackLangs = state.dualTrackLangs || []
-    trackStates = state.trackStates || {}
+      activeLang = orderedLangs[0] || Object.keys(segmentsByLang)[0] || "";
+    dualTrackMode = !!state.dualTrackMode;
+    dualTrackLangs = state.dualTrackLangs || [];
+    trackStates = state.trackStates || {};
   },
   refreshButtons: (canUndo, canRedo) => {
-    if (ui.undoBtn) ui.undoBtn.disabled = !canUndo
-    if (ui.redoBtn) ui.redoBtn.disabled = !canRedo
+    if (ui.undoBtn) ui.undoBtn.disabled = !canUndo;
+    if (ui.redoBtn) ui.redoBtn.disabled = !canRedo;
   },
   onRestore: () => {
-    syncActiveCaptionStyle()
-    renderTabs()
-    renderSegments()
-    enableExports(true)
-    updateCaption()
+    syncActiveCaptionStyle();
+    renderTabs();
+    renderSegments();
+    enableExports(true);
+    updateCaption();
   },
-})
+});
 
 const configStageController = createConfigStageController({
   ui,
@@ -309,16 +309,16 @@ const configStageController = createConfigStageController({
   selectedVideoFile: () => selectedVideoFile,
   isExporting: () => exporting,
   setGeneratedState: (state) => {
-    detectedLang = state.detectedLang
-    baseSegments = state.baseSegments
-    segmentsByLang = state.segmentsByLang
-    orderedLangs = state.orderedLangs
-    activeLang = state.activeLang
-    dualTrackMode = state.dualTrackMode
-    dualTrackLangs = state.dualTrackLangs
-    trackStates = {}
-    enableWordAnimationForAll()
-    syncActiveCaptionStyle()
+    detectedLang = state.detectedLang;
+    baseSegments = state.baseSegments;
+    segmentsByLang = state.segmentsByLang;
+    orderedLangs = state.orderedLangs;
+    activeLang = state.activeLang;
+    dualTrackMode = state.dualTrackMode;
+    dualTrackLangs = state.dualTrackLangs;
+    trackStates = {};
+    enableWordAnimationForAll();
+    syncActiveCaptionStyle();
   },
   renderTabs,
   renderSegments,
@@ -326,7 +326,7 @@ const configStageController = createConfigStageController({
   resetHistory,
   updateCaption,
   setStage,
-})
+});
 
 translationService = createTranslationService({
   downloads,
@@ -336,7 +336,7 @@ translationService = createTranslationService({
   tt,
   langName,
   setStatus: configStageController.setStatus,
-})
+});
 
 const uploadStageController = createUploadStageController({
   ui,
@@ -347,10 +347,10 @@ const uploadStageController = createUploadStageController({
   isExporting: () => exporting,
   getVideoObjectUrl: () => videoObjectUrl,
   setVideoObjectUrl: (url) => {
-    videoObjectUrl = url
+    videoObjectUrl = url;
   },
   setSelectedVideoFile: (file) => {
-    selectedVideoFile = file
+    selectedVideoFile = file;
   },
   resetEditorState,
   setLangAddStatus,
@@ -360,8 +360,9 @@ const uploadStageController = createUploadStageController({
   resetHistory,
   startEarlyTranscription: (file) =>
     configStageController.startEarlyTranscription(file),
-  resetTranscriptionCache: () => configStageController.resetTranscriptionCache(),
-})
+  resetTranscriptionCache: () =>
+    configStageController.resetTranscriptionCache(),
+});
 
 const { downloadVideo } = createVideoExporter({
   ui,
@@ -372,41 +373,41 @@ const { downloadVideo } = createVideoExporter({
   baseFileName: () => baseFileName(selectedVideoFile),
   isExporting: () => exporting,
   setExporting: (value) => {
-    exporting = value
+    exporting = value;
   },
   enableExports,
   setStatus: configStageController.setStatus,
   modal: exportModal,
-})
+});
 
 // ── Init ──
-buildLangSelects()
-renderDownloads()
-renderPresets()
-syncStyleControls()
-applyCaptionStyle()
-wireStyleControls()
-wireSegmentEditor()
-configStageController.preloadAssetsInBackground()
-setStage("upload")
-uploadStageController.wireUploadStage()
-configStageController.wireConfigStage()
-editorStageController.wireEditorStage()
+buildLangSelects();
+renderDownloads();
+renderPresets();
+syncStyleControls();
+applyCaptionStyle();
+wireStyleControls();
+wireSegmentEditor();
+configStageController.preloadAssetsInBackground();
+setStage("upload");
+uploadStageController.wireUploadStage();
+configStageController.wireConfigStage();
+editorStageController.wireEditorStage();
 ui.langAddSelect?.addEventListener("change", () => {
-  const target = ui.langAddSelect.value
-  if (target) addLanguage(target)
-})
-ui.downloadVideoBtn.addEventListener("click", downloadVideo)
-ui.exportClose.addEventListener("click", closeExportModal)
-ui.exportBackdrop.addEventListener("click", closeExportModal)
+  const target = ui.langAddSelect.value;
+  if (target) addLanguage(target);
+});
+ui.downloadVideoBtn.addEventListener("click", downloadVideo);
+ui.exportClose.addEventListener("click", closeExportModal);
+ui.exportBackdrop.addEventListener("click", closeExportModal);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !ui.exportModal.hidden) closeExportModal()
-})
+  if (e.key === "Escape" && !ui.exportModal.hidden) closeExportModal();
+});
 ui.downloadsToggle.addEventListener("click", () => {
-  const opening = ui.downloadsPanel.hidden
-  ui.downloadsPanel.hidden = !opening
+  const opening = ui.downloadsPanel.hidden;
+  ui.downloadsPanel.hidden = !opening;
   // The panel header already shows the status, so drop the dock label while open.
-  ui.statusDock?.classList.toggle("panel-open", opening)
-  if (opening) refreshClearModelsUI()
-})
-ui.clearModelsBtn?.addEventListener("click", clearLocalModels)
+  ui.statusDock?.classList.toggle("panel-open", opening);
+  if (opening) refreshClearModelsUI();
+});
+ui.clearModelsBtn?.addEventListener("click", clearLocalModels);
