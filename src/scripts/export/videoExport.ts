@@ -12,6 +12,7 @@ type VideoExportOptions = {
   enableExports: (on: boolean) => void
   setStatus: (message: string, kind?: string) => void
   modal: any
+  remuxAudioToAacLc?: (file: File) => Promise<Blob>
 }
 
 type WebCodecsExportResult =
@@ -77,6 +78,7 @@ export function createVideoExporter(options: VideoExportOptions) {
     enableExports,
     setStatus,
     modal,
+    remuxAudioToAacLc,
   } = options
 
   function errorMessage(error: unknown) {
@@ -267,7 +269,7 @@ export function createVideoExporter(options: VideoExportOptions) {
       }
     }
 
-    const input = new Input({
+    let input = new Input({
       source: new BlobSource(file),
       formats: ALL_FORMATS,
     })
@@ -291,6 +293,29 @@ export function createVideoExporter(options: VideoExportOptions) {
 
     let canvas: any = null
     let ctx: any = null
+
+    // For MP4, probe the source audio codec. If it's not AAC-LC (mp4a.40.2),
+    // QuickTime will show an "incompatible content" warning (HE-AAC, Opus, etc.).
+    // When ffmpeg is available, use it to transcode the audio to AAC-LC before
+    // passing the file to mediabunny — ffmpeg handles HE-AAC/SBR correctly while
+    // WebCodecs decoders often don't, causing severe quality degradation.
+    if (settings.format === "mp4" && remuxAudioToAacLc) {
+      try {
+        const audioTracks = await input.getAudioTracks()
+        const firstTrack = audioTracks[0]
+        if (firstTrack) {
+          const codecStr = await firstTrack.getCodecParameterString()
+          if (codecStr !== "mp4a.40.2") {
+            modal.setExportStage(tt("exportStages.preparingEncoder"), "busy")
+            const remuxed = await remuxAudioToAacLc(file)
+            // Replace input with the remuxed version (AAC-LC audio, video unchanged)
+            input = new Input({ source: new BlobSource(remuxed), formats: ALL_FORMATS })
+          }
+        }
+      } catch {
+        // If probing or remux fails, continue with original input
+      }
+    }
 
     let conversion: any
     try {
@@ -341,6 +366,26 @@ export function createVideoExporter(options: VideoExportOptions) {
         handled: false,
         reason: tt("exportErrors.webcodecsInvalid", {
           tracks: formatDiagnostic(conversion.discardedTracks),
+        }),
+      }
+    }
+
+    // Audio tracks can be silently dropped when the browser can't encode the required
+    // codec (e.g. AAC for MP4). isValid stays true because MP4 doesn't require audio,
+    // so we have to catch this separately and fall back to the recorder which captures
+    // audio directly from the video element.
+    const droppedAudio = conversion.discardedTracks.some(
+      (t: any) => t.track?.type === "audio" && t.reason !== "discarded_by_user",
+    )
+    if (droppedAudio) {
+      console.warn(
+        "[export] Audio track dropped in WebCodecs path, falling back to recorder",
+        conversion.discardedTracks,
+      )
+      return {
+        handled: false,
+        reason: tt("exportErrors.webcodecsInvalid", {
+          tracks: "audio",
         }),
       }
     }

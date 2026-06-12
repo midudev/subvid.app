@@ -377,6 +377,7 @@ const { downloadVideo } = createVideoExporter({
   enableExports,
   setStatus: configStageController.setStatus,
   modal: exportModal,
+  remuxAudioToAacLc: configStageController.remuxAudioToAacLc,
 })
 
 // ── Init ──

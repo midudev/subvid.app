@@ -185,9 +185,33 @@ export function createAudioService(options: AudioServiceOptions) {
     return copied
   }
 
+  async function remuxAudioToAacLc(file: File): Promise<Blob> {
+    const worker = await ensureFfmpeg()
+    const inputName = "export-source.mp4"
+    const outputName = "export-aac.mp4"
+    try {
+      await worker.writeFile(inputName, await fetchFile(file))
+      await worker.exec([
+        "-i", inputName,
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-ar", "44100",
+        outputName,
+      ])
+      const data = await worker.readFile(outputName)
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer)
+      return new Blob([bytes], { type: "video/mp4" })
+    } finally {
+      await worker.deleteFile(inputName).catch(() => {})
+      await worker.deleteFile(outputName).catch(() => {})
+    }
+  }
+
   return {
     ensureFfmpeg,
     decodeWavPcm16,
     extractAudioBuffer,
+    remuxAudioToAacLc,
   }
 }
