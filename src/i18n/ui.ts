@@ -45,10 +45,14 @@ export const ui = {
     },
     footer: {
       developedBy: "Developed by",
+      and: "and",
+      contributors: "contributors",
       with: "with",
       code: "Code",
       sponsor: "Sponsor",
       repoAria: "View repository on GitHub",
+      contributorsUrl:
+        "https://github.com/midudev/subvid.app/graphs/contributors",
       language: "Language",
     },
     config: {
@@ -320,10 +324,14 @@ export const ui = {
     },
     footer: {
       developedBy: "Desarrollado por",
+      and: "y",
+      contributors: "contribuidores",
       with: "con",
       code: "Código",
       sponsor: "Patrocinar",
       repoAria: "Ver repositorio en GitHub",
+      contributorsUrl:
+        "https://github.com/midudev/subvid.app/graphs/contributors",
       language: "Idioma",
     },
     config: {

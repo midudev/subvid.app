@@ -18,6 +18,13 @@ const localePath = (code: string) => (code === defaultLang ? "/" : `/${code}/`)
       target="_blank"
       rel="noopener noreferrer">midudev</a
     >
+    {t.footer.and}
+    <a
+      class="footer-link"
+      href={t.footer.contributorsUrl}
+      target="_blank"
+      rel="noopener noreferrer">{t.footer.contributors}</a
+    >
     {t.footer.with} <HeartIcon class="footer-heart" />
   </span>
   <a
