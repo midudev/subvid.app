@@ -15,6 +15,16 @@ const t = useTranslations(Astro.currentLocale)
     >
       <option value="">{t.sidebar.addLangOption}</option>
     </select>
+    <button
+      id="transcript-cut-btn"
+      type="button"
+      class="btn-ghost tx-cut-button"
+      aria-controls="transcript"
+      hidden
+      disabled
+    >
+      {t.client.transcript.cutAction}
+    </button>
     <span id="lang-add-status" class="lang-add-status" hidden></span>
   </div>
   <div

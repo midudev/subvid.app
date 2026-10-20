@@ -1,7 +1,6 @@
 // The transcript as a single editable document: one line per subtitle and one
-// span per word. On the transcription track, deleting words cuts them from the
-// video (they stay struck through so they can be restored) and typing corrects
-// the text without touching the audio. Translation tracks are plain text.
+// span per word. Text edits preserve the media; only the explicit cut action
+// removes selected words from the video. Translation tracks are plain text.
 import { keptParts, type TimeRange } from "@/scripts/cuts.ts"
 import {
   estimatedWordsForSegment,
@@ -32,6 +31,7 @@ type Token = { text: string; sources: number[]; word?: SubtitleWord }
 
 type TranscriptEditorOptions = {
   root: HTMLElement
+  cutButton: HTMLButtonElement
   tt: (path: string, vars?: Record<string, unknown>) => string
   segmentsFor: (lang: string) => Segment[]
   activeLang: () => string
@@ -75,6 +75,7 @@ function nonSpaceLength(text: string) {
 export function createTranscriptEditor(options: TranscriptEditorOptions) {
   const {
     root,
+    cutButton,
     tt,
     segmentsFor,
     activeLang,
@@ -96,6 +97,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
   let wordTimesDirty = true
   let currentWord: HTMLElement | null = null
   let activeLine: HTMLElement | null = null
+  let cutSelection: Range | null = null
 
   const segments = () => segmentsFor(activeLang())
   const cutMode = () => !!activeLang() && activeLang() === sourceLang()
@@ -152,7 +154,18 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     const words = ensureWords(seg)
     let i = 0
     while (i < words.length) {
-      if (i > 0) line.append(" ")
+      // Empty words retain their original timing and separate existing cuts.
+      if (!words[i].cut && !words[i].text.trim()) {
+        const anchor = document.createElement("span")
+        anchor.className = "tx-anchor"
+        anchor.dataset.w = String(i)
+        anchor.hidden = true
+        anchor.contentEditable = "false"
+        line.append(anchor)
+        i += 1
+        continue
+      }
+      if (line.querySelector(".tx-w, .tx-cut")) line.append(" ")
       if (words[i].cut) {
         const from = i
         while (i < words.length && words[i].cut) i += 1
@@ -166,13 +179,20 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
       line.append(span)
       i += 1
     }
-    line.classList.toggle("is-cut", words.length > 0 && words.every((w) => w.cut))
-    if (!words.length) line.append(document.createElement("br"))
+    line.classList.toggle(
+      "is-cut",
+      words.length > 0 && words.every((w) => w.cut),
+    )
+    if (!line.querySelector(".tx-w, .tx-cut"))
+      line.append(document.createElement("br"))
     return line
   }
 
   function render() {
     commitPendingEdit()
+    cutSelection = null
+    cutButton.hidden = !cutMode() || !segments().length
+    cutButton.disabled = true
     const segs = segments()
     renderedLang = activeLang()
     currentWord = null
@@ -249,7 +269,11 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         info.before = word
         continue
       }
-      const offset = textOffsetWithin(span, range.startContainer, range.startOffset)
+      const offset = textOffsetWithin(
+        span,
+        range.startContainer,
+        range.startOffset,
+      )
       const length = span.textContent?.length || 0
       if (offset <= 0) {
         info.after = word
@@ -320,13 +344,13 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     const words = segments()[line]?.words || []
     let previous = -1
     for (let i = Math.min(word, words.length) - 1; i >= 0; i -= 1)
-      if (!words[i].cut) {
+      if (!words[i].cut && words[i].text.trim()) {
         previous = i
         break
       }
     let next = -1
     for (let i = Math.max(0, word); i < words.length; i += 1)
-      if (!words[i].cut) {
+      if (!words[i].cut && words[i].text.trim()) {
         next = i
         break
       }
@@ -369,6 +393,24 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     if (mark.space) {
       const { node: text, offset } = target
       if (/\s/.test(text.data[offset] || "")) target.offset += 1
+      else if (offset === text.length) {
+        let next = text.parentElement?.classList.contains("tx-w")
+          ? text.parentElement.nextSibling
+          : text.nextSibling
+        while (
+          next instanceof HTMLElement &&
+          next.classList.contains("tx-anchor")
+        )
+          next = next.nextSibling
+        if (next instanceof Text && /^\s/.test(next.data)) {
+          target = { node: next, offset: 1 }
+        } else {
+          // A removed final word leaves no rendered separator. Keep the
+          // caret's space so newly typed text does not join the previous word.
+          text.insertData(offset, " ")
+          target.offset += 1
+        }
+      }
     }
     setCaret(target.node, target.offset)
   }
@@ -416,7 +458,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         renderLineAt(line)
       })
     })
-    const anchor = prefer === "before" ? targets[0] : targets[targets.length - 1]
+    const anchor =
+      prefer === "before" ? targets[0] : targets[targets.length - 1]
     caretNear(
       anchor.line,
       prefer === "before" ? anchor.word : anchor.word + 1,
@@ -428,7 +471,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     const seg = segments()[line]
     if (!seg?.words) return
     structuralChange(() => {
-      for (let i = from; i < to; i += 1) if (seg.words![i]) seg.words![i].cut = false
+      for (let i = from; i < to; i += 1)
+        if (seg.words![i]) seg.words![i].cut = false
       syncText(seg)
       renderLineAt(line)
     })
@@ -436,175 +480,241 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
 
   // ── Text corrections ──
 
-  function editWordText(ref: WordRef, span: HTMLElement, text: string, caret: number) {
-    const seg = segments()[ref.line]
-    const word = seg?.words?.[ref.word]
-    if (!word) return
+  /** Remove only the selected text. Empty timed words remain as media anchors. */
+  function deleteText(range: Range) {
+    const hits = selectedWords(range)
+    const firstLine =
+      lineOf(range.startContainer) ||
+      (hits.length ? lineEl(hits[0].line) : null)
+    if (!firstLine) return
+    const index = Number(firstLine.dataset.index)
+    const mark = firstLine.contains(range.startContainer)
+      ? caretMark(firstLine, range.startContainer, range.startOffset)
+      : { chars: 0, space: false }
     beginTextEdit()
-    word.text = text
-    syncText(seg)
-    span.textContent = text
-    if (span.firstChild) setCaret(span.firstChild, caret)
+    if (!hits.length) {
+      // Deleting a space joins words using the existing timing reconciliation.
+      // Never let a DOM deletion remove a cut marker or a temporal anchor.
+      const walker = document.createTreeWalker(firstLine, NodeFilter.SHOW_TEXT)
+      const edits: Array<{ node: Text; from: number; to: number }> = []
+      let node: Text | null
+      while ((node = walker.nextNode() as Text | null)) {
+        if (
+          node.parentElement?.closest(".tx-cut") ||
+          !range.intersectsNode(node)
+        )
+          continue
+        edits.push({
+          node,
+          from: node === range.startContainer ? range.startOffset : 0,
+          to: node === range.endContainer ? range.endOffset : node.length,
+        })
+      }
+      for (const { node, from, to } of edits) node.deleteData(from, to - from)
+      setCaret(range.startContainer, range.startOffset)
+      reconcileFromSelection()
+      return
+    }
+    const changedLines = new Set<number>()
+    for (const hit of hits) {
+      const word = segments()[hit.line].words![hit.word]
+      word.text = word.text.slice(0, hit.from) + word.text.slice(hit.to)
+      changedLines.add(hit.line)
+    }
+    for (const line of changedLines) {
+      syncText(segments()[line])
+      renderLineAt(line)
+    }
+    const fresh = lineEl(index)
+    if (fresh) {
+      restoreCaret(fresh, mark)
+      const last = hits[hits.length - 1]
+      const caret = selectionRange()
+      if (
+        last.line === index &&
+        last.to === last.span.textContent!.length &&
+        caret
+      ) {
+        const tail = caret.cloneRange()
+        tail.setEnd(fresh, fresh.childNodes.length)
+        if (/^\S/.test(tail.toString())) {
+          // Keep the separator after an erased word so typing at its old
+          // position does not concatenate the correction with the next word.
+          const space = document.createTextNode(" ")
+          caret.insertNode(space)
+          setCaret(space, 0)
+        }
+      }
+    }
     onTextChange()
   }
 
-  function deleteChars(info: CaretInfo, event: InputEvent, forward: boolean) {
-    const inside = info.inside!
-    const text = inside.span.textContent || ""
-    let from = forward ? inside.offset : inside.offset - 1
-    let to = forward ? inside.offset + 1 : inside.offset
-    // Trust the browser on grapheme boundaries when it tells us.
-    const target = event.getTargetRanges?.()[0]
-    if (target && inside.span.contains(target.startContainer)) {
-      from = textOffsetWithin(inside.span, target.startContainer, target.startOffset)
-      to = textOffsetWithin(inside.span, target.endContainer, target.endOffset)
-    }
-    if (to <= from || to - from >= text.length) {
-      cutWords([{ line: info.line, word: inside.word }], forward ? "after" : "before")
-      return
-    }
-    editWordText(
-      { line: info.line, word: inside.word },
-      inside.span,
-      text.slice(0, from) + text.slice(to),
-      from,
-    )
-  }
-
-  function wordsInLine(line: number, from: number, to: number): WordRef[] {
-    const refs: WordRef[] = []
-    const words = segments()[line]?.words || []
-    for (let i = Math.max(0, from); i <= Math.min(to, words.length - 1); i += 1)
-      if (!words[i].cut) refs.push({ line, word: i })
-    return refs
-  }
-
   function handleDelete(event: InputEvent) {
-    const range = selectionRange()
+    let range = selectionRange()
     if (!range) return
-    const type = event.inputType
-    const forward = type.endsWith("Forward")
-
-    if (!range.collapsed) {
-      const hits = selectedWords(range)
-      if (hits.length === 1 && hits[0].partial) {
-        const [hit] = hits
-        const text = hit.span.textContent || ""
-        editWordText(hit, hit.span, text.slice(0, hit.from) + text.slice(hit.to), hit.from)
+    if (range.collapsed) {
+      const forward = event.inputType.endsWith("Forward")
+      const info = caretInfo(range)
+      if (
+        info &&
+        !info.inside &&
+        (forward ? info.after == null : info.before == null)
+      ) {
+        mergeLines(forward ? info.line : info.line - 1)
         return
       }
-      cutWords(hits, "before")
-      return
+      // Native target ranges account for platform word and grapheme boundaries.
+      const target = event.getTargetRanges?.()[0]
+      if (target && !target.collapsed) {
+        range = document.createRange()
+        range.setStart(target.startContainer, target.startOffset)
+        range.setEnd(target.endContainer, target.endOffset)
+      } else {
+        // Firefox does not supply target ranges for every deletion type.
+        const granularity = event.inputType.startsWith("deleteWord")
+          ? "word"
+          : /Line(Backward|Forward)$/.test(event.inputType)
+            ? "lineboundary"
+            : "character"
+        window
+          .getSelection()
+          ?.modify("extend", forward ? "forward" : "backward", granularity)
+        range = selectionRange()
+      }
+      if (range && /^deleteContent(Backward|Forward)$/.test(event.inputType)) {
+        const parent =
+          range.startContainer instanceof Element
+            ? range.startContainer
+            : range.startContainer.parentElement
+        const span = parent?.closest<HTMLElement>(".tx-w")
+        if (span?.contains(range.endContainer)) {
+          // Some engines delete a single code point of an emoji sequence.
+          // Expand to complete graphemes, including combining marks and ZWJ.
+          const from = textOffsetWithin(
+            span,
+            range.startContainer,
+            range.startOffset,
+          )
+          const to = textOffsetWithin(span, range.endContainer, range.endOffset)
+          const text = span.textContent || ""
+          const boundaries = [
+            ...new Intl.Segmenter(undefined, {
+              granularity: "grapheme",
+            }).segment(text),
+          ].map(({ index }) => index)
+          boundaries.push(text.length)
+          const start = boundaries.findLast((offset) => offset <= from) ?? 0
+          const end = boundaries.find((offset) => offset >= to) ?? text.length
+          const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT)
+          let offset = 0
+          let node: Text | null
+          while ((node = walker.nextNode() as Text | null)) {
+            if (start >= offset && start < offset + node.length)
+              range.setStart(node, start - offset)
+            if (end > offset && end <= offset + node.length)
+              range.setEnd(node, end - offset)
+            offset += node.length
+          }
+        }
+      }
     }
-
-    const info = caretInfo(range)
-    if (!info) return
-    const { line, before, after, inside } = info
-
-    if (/Line(Backward|Forward)$/.test(type)) {
-      const pivot = inside?.word ?? (forward ? after : before)
-      if (pivot == null) return
-      cutWords(
-        forward ? wordsInLine(line, pivot, Infinity) : wordsInLine(line, 0, pivot),
-        forward ? "after" : "before",
-      )
-      return
-    }
-
-    if (inside) {
-      if (type.startsWith("deleteWord"))
-        cutWords([{ line, word: inside.word }], forward ? "after" : "before")
-      else deleteChars(info, event, forward)
-      return
-    }
-
-    const target = forward ? after : before
-    if (target != null) {
-      cutWords([{ line, word: target }], forward ? "after" : "before")
-      return
-    }
-    // At the edge of a line: join it with its neighbour, like a text editor.
-    mergeLines(forward ? line : line - 1)
+    if (
+      range &&
+      !range.collapsed &&
+      root.contains(range.commonAncestorContainer)
+    )
+      deleteText(range)
   }
 
   function replaceSelection(range: Range, text: string) {
     const hits = selectedWords(range)
-    if (!hits.length) {
-      // Insert at the start of the selection and reconcile, as the `input`
-      // event would (undo/redo are handled by the editor, not the browser).
-      range.collapse(true)
-      const node = document.createTextNode(text)
-      range.insertNode(node)
-      setCaret(node, text.length)
-      reconcileFromSelection()
+    if (hits.length && text) {
+      const first = hits[0]
+      const last = hits[hits.length - 1]
+      const line = lineEl(first.line)!
+      const mark = line.contains(range.startContainer)
+        ? caretMark(line, range.startContainer, range.startOffset)
+        : { chars: 0, space: false }
+      const prefix = first.span.textContent!.slice(0, first.from)
+      const suffix = last.span.textContent!.slice(last.to)
+      beginTextEdit()
+      for (const hit of hits) {
+        const word = segments()[hit.line].words![hit.word]
+        word.text = word.text.slice(0, hit.from) + word.text.slice(hit.to)
+      }
+      const word = segments()[first.line].words![first.word]
+      word.text = prefix + text + (first.line === last.line ? suffix : "")
+      if (first.line === last.line && first !== last)
+        segments()[last.line].words![last.word].text = ""
+      // Preserve the source interval when a correction contains several words.
+      const parts = word.text.split(/\s+/).filter(Boolean)
+      if (parts.length > 1) {
+        const total = parts.reduce((sum, part) => sum + part.length, 0)
+        let cursor = word.start
+        segments()[first.line].words!.splice(
+          first.word,
+          1,
+          ...parts.map((part, i) => {
+            const end =
+              i === parts.length - 1
+                ? word.end
+                : cursor + ((word.end - word.start) * part.length) / total
+            const next = { start: cursor, end, text: part }
+            cursor = end
+            return next
+          }),
+        )
+      }
+      for (const index of new Set(hits.map((hit) => hit.line))) {
+        syncText(segments()[index])
+        renderLineAt(index)
+      }
+      restoreCaret(lineEl(first.line)!, {
+        chars: mark.chars + nonSpaceLength(text),
+        space: /\s$/.test(text),
+      })
+      onTextChange()
       return
     }
-    const segs = segments()
-    const [first] = hits
-    const last = hits[hits.length - 1]
-    const prefix = (first.span.textContent || "").slice(0, first.from)
-    const suffix = (last.span.textContent || "").slice(last.to)
-    const sameLine = last.line === first.line
-    const caretChars =
-      (segs[first.line].words || [])
-        .slice(0, first.word)
-        .filter((word) => !word.cut)
-        .reduce((sum, word) => sum + nonSpaceLength(word.text), 0) +
-      nonSpaceLength(prefix + text)
-
-    structuralChange(() => {
-      const firstWord = segs[first.line].words![first.word]
-      const lineHits = hits.filter((hit) => hit.line === first.line)
-      firstWord.text = `${prefix}${text}${sameLine ? suffix : ""}`
-      firstWord.end = Math.max(
-        firstWord.end,
-        segs[first.line].words![lineHits[lineHits.length - 1].word].end,
-      )
-      // The other selected words are replaced, not cut: their audio stays.
-      // A partly selected last word on another line keeps its unselected end.
-      if (!sameLine && suffix)
-        segs[last.line].words![last.word].text = suffix
-      const removed = new Set(
-        hits
-          .slice(1)
-          .filter((hit) => sameLine || hit !== last || !suffix)
-          .map((hit) => `${hit.line}:${hit.word}`),
-      )
-      segs.forEach((seg, line) => {
-        if (seg.words && hits.some((hit) => hit.line === line))
-          seg.words = seg.words.filter((_, word) => !removed.has(`${line}:${word}`))
-      })
-      splitSpaces(segs[first.line])
-      for (let line = segs.length - 1; line >= first.line; line -= 1) {
-        if (!hits.some((hit) => hit.line === line)) continue
-        if (line > first.line && !segs[line].words?.length) segs.splice(line, 1)
-        else syncText(segs[line])
-      }
-      render()
-    })
-
-    const line = lineEl(first.line)
-    if (line) restoreCaret(line, { chars: caretChars, space: /\s$/.test(text) })
+    deleteText(range)
+    const caret = selectionRange()
+    if (!caret || !text) return
+    beginTextEdit()
+    caret.collapse(true)
+    const node = document.createTextNode(text)
+    caret.insertNode(node)
+    setCaret(node, text.length)
+    reconcileFromSelection()
   }
 
-  /** Splits words containing spaces, sharing out their timing. */
-  function splitSpaces(seg: Segment) {
-    if (!seg.words) return
-    seg.words = seg.words.flatMap((word) => {
-      const parts = word.text.split(/\s+/).filter(Boolean)
-      if (parts.length <= 1) return [{ ...word, text: parts[0] ?? word.text }]
-      const total = parts.reduce((sum, part) => sum + part.length, 0)
-      let cursor = word.start
-      return parts.map((part, index) => {
-        const end =
-          index === parts.length - 1
-            ? word.end
-            : cursor + ((word.end - word.start) * part.length) / total
-        const next = { ...word, start: cursor, end, text: part }
-        cursor = end
-        return next
+  function updateCutSelection() {
+    const selection = selectionRange()
+    if (selection && !selection.collapsed) cutSelection = selection.cloneRange()
+    else if (document.activeElement !== cutButton) cutSelection = null
+    cutButton.disabled =
+      !cutMode() ||
+      !cutSelection ||
+      !selectedWords(cutSelection).some(({ line, word }) => {
+        const item = segments()[line]?.words?.[word]
+        return item && !item.cut && item.end > item.start
       })
+  }
+
+  function cutSelectedWords() {
+    if (
+      !cutMode() ||
+      !cutSelection ||
+      !root.contains(cutSelection.commonAncestorContainer)
+    )
+      return
+    const refs = selectedWords(cutSelection).filter(({ line, word }) => {
+      const item = segments()[line]?.words?.[word]
+      return item && !item.cut && item.end > item.start
     })
+    root.focus()
+    cutWords(refs, "before")
+    cutSelection = null
+    cutButton.disabled = true
   }
 
   // ── Lines ──
@@ -619,7 +729,10 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     let at = info.after ?? words.length
     if (info.inside) {
       const length = info.inside.span.textContent?.length || 0
-      at = info.inside.offset >= length / 2 ? info.inside.word + 1 : info.inside.word
+      at =
+        info.inside.offset >= length / 2
+          ? info.inside.word + 1
+          : info.inside.word
     }
     if (at <= 0 || at >= words.length) return
 
@@ -671,7 +784,9 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     const seg = segments()[index]
     if (!seg) return
     const oldWords = seg.words || []
-    type Item = { kind: "chars"; chars: Array<[string, number]> } | { kind: "cut"; from: number; to: number }
+    type Item =
+      | { kind: "chars"; chars: Array<[string, number]> }
+      | { kind: "cut"; from: number; to: number }
     const items: Item[] = []
     let chars: Array<[string, number]> = []
     let looseText = false
@@ -688,7 +803,10 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
           if (source < 0 && data.trim()) looseText = true
           for (const ch of data) chars.push([ch, source])
         } else if (child instanceof HTMLElement) {
-          if (child.classList.contains("tx-cut")) {
+          if (child.classList.contains("tx-anchor")) {
+            // Reinsert temporal anchors below, without splitting adjacent text.
+            return
+          } else if (child.classList.contains("tx-cut")) {
             flush()
             items.push({
               kind: "cut",
@@ -761,14 +879,17 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         const end =
           i === group.length - 1
             ? original.end
-            : cursor + ((original.end - original.start) * token.text.length) / total
+            : cursor +
+              ((original.end - original.start) * token.text.length) / total
         token.word = { start: cursor, end, text: token.text }
         cursor = end
       })
     })
     tokens.forEach((token) => {
       if (token.sources.length < 2) return
-      const merged = token.sources.map((source) => oldWords[source]).filter(Boolean)
+      const merged = token.sources
+        .map((source) => oldWords[source])
+        .filter(Boolean)
       token.word = {
         start: Math.min(...merged.map((w) => w.start)),
         end: Math.max(...merged.map((w) => w.end)),
@@ -790,6 +911,17 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
       return word
     })
 
+    // Native composition can replace entire spans. Keep their time records,
+    // including cut markers, even if the browser removed the corresponding DOM.
+    const represented = new Set(tokens.flatMap((token) => token.sources))
+    const retained = new Set(sequence.filter((item) => !("sources" in item)))
+    oldWords.forEach((word, index) => {
+      if (represented.has(index) || retained.has(word)) return
+      const anchor = word.cut ? word : { ...word, text: "" }
+      const at = next.findIndex((item) => item.start >= anchor.start)
+      next.splice(at < 0 ? next.length : at, 0, anchor)
+    })
+
     const structural =
       next.length !== oldWords.length ||
       next.some(
@@ -799,7 +931,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
           !!word.cut !== !!oldWords[i].cut,
       )
     const drifted = wordSpans(line).some(
-      (span) => (span.textContent || "").trim() !== next[Number(span.dataset.w)]?.text,
+      (span) =>
+        (span.textContent || "").trim() !== next[Number(span.dataset.w)]?.text,
     )
     const changed =
       structural || next.some((word, i) => word.text !== oldWords[i]?.text)
@@ -836,7 +969,11 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     const line = lineOf(range?.startContainer || null)
     if (!line) {
       // Text typed outside any line: drop it and redraw.
-      if ([...root.childNodes].some((n) => !(n instanceof HTMLElement && n.matches(".tx-line"))))
+      if (
+        [...root.childNodes].some(
+          (n) => !(n instanceof HTMLElement && n.matches(".tx-line")),
+        )
+      )
         render()
       return
     }
@@ -850,7 +987,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     const fragment = range.cloneContents()
     fragment.querySelectorAll(".tx-cut").forEach((el) => el.remove())
     const lines = [...fragment.querySelectorAll(".tx-line")]
-    if (!lines.length) return (fragment.textContent || "").replace(/\s+/g, " ").trim()
+    if (!lines.length)
+      return (fragment.textContent || "").replace(/\s+/g, " ").trim()
     return lines
       .map((line) => (line.textContent || "").replace(/\s+/g, " ").trim())
       .filter(Boolean)
@@ -887,7 +1025,10 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         lo = mid + 1
       } else hi = mid - 1
     }
-    const hit = found >= 0 && time <= wordTimes[found].end + 0.08 ? wordTimes[found].el : null
+    const hit =
+      found >= 0 && time <= wordTimes[found].end + 0.08
+        ? wordTimes[found].el
+        : null
     if (hit === currentWord) return
     currentWord?.classList.remove("is-current")
     hit?.classList.add("is-current")
@@ -909,6 +1050,18 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
   // ── Events ──
 
   function wire() {
+    document.addEventListener("selectionchange", updateCutSelection)
+    cutButton.addEventListener("pointerdown", (event) => event.preventDefault())
+    cutButton.addEventListener("click", cutSelectedWords)
+    root.addEventListener("focusout", (event) => {
+      if (
+        event.relatedTarget !== cutButton &&
+        !root.contains(event.relatedTarget as Node)
+      ) {
+        cutSelection = null
+        cutButton.disabled = true
+      }
+    })
     root.addEventListener("beforeinput", (event: InputEvent) => {
       const type = event.inputType
       if (type === "historyUndo" || type === "historyRedo") {
@@ -932,7 +1085,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         }
         return
       }
-      if (!cutMode()) return
+      if (!cutMode() || event.isComposing) return
 
       if (type.startsWith("delete")) {
         event.preventDefault()
@@ -954,7 +1107,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
             })()
           : null)
       if (targetRange) {
-        const text = event.data ?? event.dataTransfer?.getData("text/plain") ?? ""
+        const text =
+          event.data ?? event.dataTransfer?.getData("text/plain") ?? ""
         event.preventDefault()
         replaceSelection(targetRange, text.replace(/\s+/g, " "))
       }
@@ -975,9 +1129,10 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     root.addEventListener("cut", (event: ClipboardEvent) => {
       const range = selectionRange()
       if (!range || range.collapsed || !event.clipboardData) return
+      if (!cutMode()) return
       event.preventDefault()
       event.clipboardData.setData("text/plain", selectedPlainText(range))
-      if (cutMode()) cutWords(selectedWords(range), "before")
+      deleteText(range)
     })
     root.addEventListener("dragstart", (event) => event.preventDefault())
 
@@ -995,7 +1150,11 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
       const seg = segments()[index]
       if (!seg) return
       if (group) {
-        restoreWords(index, Number(group.dataset.from), Number(group.dataset.to))
+        restoreWords(
+          index,
+          Number(group.dataset.from),
+          Number(group.dataset.to),
+        )
         return
       }
       // The timestamp gutter is the line's ::before.
@@ -1030,6 +1189,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     commitPendingEdit,
     highlightTime,
     setActiveLine,
+    cutSelectedWords,
   }
 }
 

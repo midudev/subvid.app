@@ -163,7 +163,7 @@ function currentSegments(): Segment[] {
   return state.segmentsByLang[state.activeLang] || [];
 }
 
-// Words deleted from the transcription are cut from the video.
+// Only words explicitly marked as cut remove media from the video.
 function cutRanges() {
   return cutRangesFromSegments(state.segmentsByLang[state.detectedLang]);
 }

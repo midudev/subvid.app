@@ -10,6 +10,7 @@ export type SubtitleSegment = {
 export type SubtitleWord = {
   start: number
   end: number
+  /** Empty text retains an uncut time interval after a subtitle-only deletion. */
   text: string
   /** Cut from the video in the transcript editor: kept for restoring, never shown. */
   cut?: boolean
@@ -207,7 +208,12 @@ function isWordLevelChunks(chunks: any[]) {
 }
 
 export function wordsText(words: SubtitleWord[]) {
-  return words.reduce((text, word) => appendWordText(text, word.text), "").trim()
+  return words
+    .reduce(
+      (text, word) => word.text.trim() ? appendWordText(text, word.text) : text,
+      "",
+    )
+    .trim()
 }
 
 function appendWordText(text: string, word: string) {
@@ -305,7 +311,7 @@ export function estimatedWordsForSegment(segment: SubtitleSegment): SubtitleWord
 
   const textWords = tokenizeSubtitleText(text)
   const storedWords = Array.isArray(segment.words)
-    ? segment.words.filter((word) => !word.cut)
+    ? segment.words.filter((word) => !word.cut && word.text.trim())
     : []
   if (
     storedWords.length &&
