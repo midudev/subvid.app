@@ -160,6 +160,7 @@ export function createEditor(ctx: EditorContext) {
 
   const transcript = createTranscriptEditor({
     root: ui.transcript,
+    cutButton: ui.transcriptCutBtn,
     tt,
     segmentsFor: (lang) => state.segmentsByLang[lang] || [],
     activeLang: () => state.activeLang,

@@ -1,6 +1,6 @@
 import type { SubtitleSegment } from "@/scripts/subtitles.ts"
 
-// Words deleted in the transcript editor are cut from the video. The cuts are
+// Words explicitly cut in the transcript editor are removed from the video. Cuts are
 // time ranges on the source media, derived from the transcription track words.
 export type TimeRange = { start: number; end: number }
 

@@ -1399,6 +1399,7 @@ input[type="range"] {
   inset: 0;
   z-index: 20;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--bg);
 }
@@ -2112,6 +2113,15 @@ video {
   color: var(--danger);
 }
 
+.tx-cut-button {
+  min-height: 2.75rem;
+  max-width: 100%;
+  white-space: normal;
+}
+.tx-cut-button[hidden] {
+  display: none;
+}
+
 /* Transcript: one editable document, a line per subtitle and a span per word. */
 .transcript {
   min-height: 0;
@@ -2705,7 +2715,7 @@ video {
 /* ── Responsive ── */
 @media (max-width: 880px) {
   .editor-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(0, 0.9fr);
   }
   .sidebar {
