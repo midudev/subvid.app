@@ -57,7 +57,8 @@ const structuredData = {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <!-- Hosts for the AI models and WASM runtimes, fetched once the user picks a file. -->
+    <slot name="head" />
+    {/* Hosts for the AI models and WASM runtimes, fetched once the user picks a file. */}
     <link rel="dns-prefetch" href="https://huggingface.co" />
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f7f6" />

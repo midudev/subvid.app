@@ -92,18 +92,3 @@ const t = useTranslations(Astro.currentLocale)
 
   <Footer />
 </section>
-
-<script>
-  import { createPreviewReader } from "@/scripts/previewReader.ts"
-
-  const $ = (selector: string) => document.querySelector<HTMLElement>(selector)
-  const stage = $("#stage-config")
-  const preview = $("#config-preview")
-  const video = document.querySelector<HTMLVideoElement>("#config-video")
-  const progress = $("#config-progress")
-  const track = $("#config-progress-track")
-  const fill = $("#config-progress-fill")
-  if (stage && preview && video && progress && track && fill) {
-    createPreviewReader({ stage, preview, video, progress, track, fill })
-  }
-</script>

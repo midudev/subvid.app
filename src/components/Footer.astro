@@ -61,14 +61,14 @@ const localePath = (code: string) => (code === defaultLang ? "/" : `/${code}/`)
   </nav>
 </footer>
 
-<script is:inline>
+<script>
   // Persist an explicit language choice so the edge redirect stops auto-detecting
-  // and respects the user's decision on future visits to the root.
-  document.querySelectorAll(".footer-lang-link").forEach((link) => {
-    link.addEventListener("click", () => {
-      const code = link.getAttribute("data-locale")
-      if (code)
-        document.cookie = `locale=${code}; path=/; max-age=31536000; samesite=lax`
-    })
+  // and respects the user's decision on future visits to the root. Delegated:
+  // the footer is rendered on more than one stage but this runs once.
+  document.addEventListener("click", (event) => {
+    const link = (event.target as Element | null)?.closest?.(".footer-lang-link")
+    const code = link?.getAttribute("data-locale")
+    if (code)
+      document.cookie = `locale=${code}; path=/; max-age=31536000; samesite=lax`
   })
 </script>

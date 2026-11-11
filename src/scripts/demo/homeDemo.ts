@@ -15,8 +15,6 @@ type Range = readonly [number, number]
 const CELL = 2
 // The scene runs at "film" rate: smooth enough and cheap on battery.
 const FRAME_MS = 1000 / 24
-// Give the hero title a head start on its word-by-word entrance.
-const START_DELAY = 0.7
 // The frame dissolves out during the last part of the loop.
 const OUTRO = 0.9
 // Moments (in video seconds) when the speaker blinks.
@@ -46,8 +44,12 @@ function formatTimecode(seconds: number) {
 export function initHomeDemo(root: HTMLElement) {
   const screen = root.querySelector<HTMLElement>(".demo-screen")
   const canvas = root.querySelector<HTMLCanvasElement>(".demo-canvas")
-  const statusText = root.querySelector<HTMLElement>(".demo-status-text")
-  const timecode = root.querySelector<HTMLElement>(".demo-time")
+  const statusText = root.querySelector<HTMLElement>(".demo-status-value")
+  const statusSizer = root.querySelector<HTMLElement>(".demo-status-sizer")
+  const timecode = root.querySelector<HTMLElement>(".demo-time-value")
+  const lane = root.querySelector<HTMLElement>(".demo-lane")
+  const playheadEl = root.querySelector<HTMLElement>(".demo-playhead")
+  const litBars = root.querySelector<HTMLElement>(".demo-bars--lit")
   if (!screen || !canvas || !statusText || !timecode) return
   // Narrowed copies: the per-frame callback below can't see the guard above.
   const statusEl: HTMLElement = statusText
@@ -74,12 +76,27 @@ export function initHomeDemo(root: HTMLElement) {
   })
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)")
 
-  let clock = -START_DELAY
+  // The loop starts on its first frame as soon as the page loads.
+  let clock = 0
   let last = 0
   let raf = 0
   let visible = false
   let sceneKey = ""
   let status = ""
+  let statusSize = ""
+  // Last values written to the DOM: per-frame writes are skipped when nothing
+  // changed, and go straight to the element that uses them (as `transform` or
+  // `clip-path`) so a frame never triggers layout or restyles the whole demo.
+  let laneWidth = 0
+  let lastPhase = ""
+  let lastScan = ""
+  let lastPlayhead = ""
+  const lastProgress = steps.map(() => "")
+  // A text node updates in place instead of replacing the element's children.
+  const timecodeText = document.createTextNode(timecodeEl.textContent ?? "")
+  timecodeEl.replaceChildren(timecodeText)
+  const statusValue = document.createTextNode(statusEl.textContent ?? "")
+  statusEl.replaceChildren(statusValue)
   let current: [number, boolean] = [0, false]
 
   function update(t: number, still = false) {
@@ -91,9 +108,9 @@ export function initHomeDemo(root: HTMLElement) {
     const videoTime = progress(DEMO_PHASES.play, t) * DEMO_DURATION
     const reveal = leaving
       ? 1 - progress([DEMO_LOOP - OUTRO, DEMO_LOOP], t)
-      : progress([0.1, DEMO_PHASES.reveal[1] - 0.2], t)
+      : progress([0, DEMO_PHASES.reveal[1] - 0.2], t)
 
-    root.dataset.phase = phase
+    if (phase !== lastPhase) root.dataset.phase = lastPhase = phase
     root.classList.toggle("is-leaving", leaving)
 
     // Timeline: waveform lit behind the scan, cue blocks appear as it passes.
@@ -104,8 +121,12 @@ export function initHomeDemo(root: HTMLElement) {
       play: videoTime / DEMO_DURATION,
       export: 1,
     }[phase]
-    root.style.setProperty("--scan", String(phase === "reveal" || leaving ? 0 : scanSrc))
-    root.style.setProperty("--playhead", String(playhead))
+    const scan = phase === "reveal" || leaving ? 0 : scanSrc
+    const nextScan = `inset(0 ${((1 - scan) * 100).toFixed(2)}% 0 0)`
+    if (litBars && nextScan !== lastScan) litBars.style.clipPath = lastScan = nextScan
+    const nextPlayhead = `translateX(${(playhead * laneWidth).toFixed(2)}px)`
+    if (playheadEl && nextPlayhead !== lastPlayhead)
+      playheadEl.style.transform = lastPlayhead = nextPlayhead
     DEMO_CUES.forEach((cue, index) => {
       const end = cue.end / DEMO_DURATION
       blocks.src[index]?.classList.toggle("is-in", !leaving && scanSrc >= end)
@@ -139,16 +160,22 @@ export function initHomeDemo(root: HTMLElement) {
       play: copy.playing,
       export: copy.exported,
     }[phase] ?? ""
-    if (nextStatus !== status) statusEl.textContent = status = nextStatus
+    // The sizer only changes with the phase: it reserves room for "100 %".
+    const nextSize =
+      phase === "transcribe" ? (copy.transcribing?.replace("{pct}", "100") ?? "") : nextStatus
+    if (statusSizer && nextSize !== statusSize) statusSizer.textContent = statusSize = nextSize
+    if (nextStatus !== status) statusValue.data = status = nextStatus
     const nextTimecode = formatTimecode(phase === "export" ? DEMO_DURATION : videoTime)
-    if (timecodeEl.textContent !== nextTimecode) timecodeEl.textContent = nextTimecode
+    if (timecodeText.data !== nextTimecode) timecodeText.data = nextTimecode
 
     // The home steps double as chapters of the demo.
     const step = still ? -1 : DEMO_STEPS.findIndex((range) => t >= range[0] && t < range[1])
     steps.forEach((el, index) => {
       el.classList.toggle("is-active", index === step)
       el.classList.toggle("is-done", step > index)
-      el.style.setProperty("--progress", index === step ? String(progress(DEMO_STEPS[index], t)) : "")
+      const nextProgress = index === step ? progress(DEMO_STEPS[index], t).toFixed(4) : ""
+      if (nextProgress !== lastProgress[index])
+        el.style.setProperty("--progress", (lastProgress[index] = nextProgress))
     })
 
     // Dithered frame: the mouth moves at syllable rate while a cue is spoken,
@@ -192,12 +219,16 @@ export function initHomeDemo(root: HTMLElement) {
     if (reduceMotion.matches) update(STILL_TIME, true)
   }
 
-  new ResizeObserver(() => {
+  const resizeObserver = new ResizeObserver(() => {
     scene.resize(screen.clientWidth, CELL)
+    // The playhead moves in pixels (compositor-only), so it needs the lane width.
+    laneWidth = lane?.clientWidth ?? 0
     sceneKey = ""
     if (reduceMotion.matches) update(STILL_TIME, true)
     else update(Math.max(0, clock))
-  }).observe(screen)
+  })
+  resizeObserver.observe(screen)
+  if (lane) resizeObserver.observe(lane)
 
   new IntersectionObserver(([entry]) => {
     visible = entry.isIntersecting

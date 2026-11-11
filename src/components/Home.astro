@@ -8,6 +8,10 @@ import ExportModal from "@/components/ExportModal.astro"
 import LogoIcon from "@/assets/svg/logo.svg"
 import { clientStrings, defaultLang, toLang } from "@/i18n/ui"
 import "@/styles/app.css"
+// The landing only needs app.css, which is inlined. Everything behind it
+// (config stage, editor, export modal) is styled by this second stylesheet.
+import editorStylesUrl from "@/styles/editor.css?url"
+import demoSpriteUrl from "@/assets/demo/interview.webp?url"
 
 // Only the active language's runtime strings are serialized into the page, so
 // app.ts can read them from `window.__I18N__` with zero extra requests.
@@ -25,6 +29,23 @@ const homePath = lang === defaultLang ? "/" : `/${lang}/`
 
 <main class="app" id="app">
   <UploadStage />
+  {
+    /* End of the landing markup: the `rel="expect"` link in the page head
+       holds the first paint until this marker has been parsed.
+
+       What the landing needs next is requested from here, not from the head,
+       so nothing competes with the HTML the first paint is waiting for. The
+       build adds the page's scripts right after the marker (see
+       astro.config.mjs), ahead of the demo sprite, which a script draws and
+       would otherwise only be requested once that script runs.
+
+       The stylesheet is in the body on purpose too: the landing above paints
+       without waiting for it, while the hidden stages below (and the module
+       scripts that reveal them) still wait until it's applied. */
+  }
+  <span id="landing-end" hidden></span>
+  <link rel="preload" as="image" type="image/webp" href={demoSpriteUrl} />
+  <link rel="stylesheet" href={editorStylesUrl} />
   <ConfigStage />
   <EditorStage />
 </main>

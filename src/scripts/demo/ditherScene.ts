@@ -1,95 +1,104 @@
-// A short "interview" for the home demo. The source is a 3-frame sprite (rest,
-// talking, blink) sampled at a low resolution every frame, dithered into the
-// subvid palette and scaled up with `image-rendering: pixelated`.
-import { ditherInto, INK } from "@/scripts/dither.ts"
+// The home demo's dithered "interview". Frames are rendered in a worker on an
+// OffscreenCanvas, so sampling and dithering every frame doesn't cost the main
+// thread anything. Browsers without OffscreenCanvas (or a worker that fails to
+// start) get the same renderer on the main thread.
+import { createDitherRenderer, type SceneState } from "@/scripts/demo/ditherRenderer.ts"
 
-// The footage is dark: lift it a little so the dithering has room to work.
-const GAIN = 1.35
-const LIFT = 0.02
-
-export const SPRITE_FRAMES = 3
+export type { SceneState }
 export const FRAME = { rest: 0, talk: 1, blink: 2 } as const
 
-export type SceneState = {
-  // Which sprite frame to show.
-  frame: number
-  // ≥ 1: slow push-in on the speaker.
-  zoom: number
-  // −0.5 → 0.5: where the zoomed crop sits inside the frame.
-  panX: number
-  panY: number
-  // 0 → 1: the frame dissolves in block by block, like a file being read.
-  reveal: number
-  // Amount of per-frame noise, so playback "breathes" like real footage.
-  grain: number
-}
+type Renderer = ReturnType<typeof createDitherRenderer>
 
 export function createDitherScene(
   canvas: HTMLCanvasElement,
   spriteUrl: string,
   onLoad: () => void,
 ) {
-  const ctx = canvas.getContext("2d", { alpha: false })
-  const sampler = document.createElement("canvas")
-  const samplerCtx = sampler.getContext("2d", { willReadFrequently: true })
-  let width = 0
-  let height = 0
-  let image: ImageData | null = null
-  let pixels: Uint32Array | null = null
+  let size: [number, number] | null = null
+  let state: SceneState | null = null
   let sprite: HTMLImageElement | null = null
+  let worker: Worker | null = null
+  let renderer: Renderer | null = null
+
+  // Main-thread fallback: replays whatever the scene has been told so far.
+  function renderOnMainThread(target: HTMLCanvasElement) {
+    renderer = createDitherRenderer(target, document.createElement("canvas"))
+    if (size) renderer.resize(...size)
+    if (sprite) renderer.setSprite(sprite, sprite.naturalWidth, sprite.naturalHeight)
+    if (state) renderer.render(state)
+  }
+
+  // A transferred canvas can't be drawn from this thread anymore: swap in a
+  // fresh one if the worker dies.
+  function abandonWorker() {
+    if (!worker) return
+    worker.terminate()
+    worker = null
+    const fresh = canvas.cloneNode() as HTMLCanvasElement
+    canvas.replaceWith(fresh)
+    canvas = fresh
+    renderOnMainThread(fresh)
+  }
+
+  const canUseWorker =
+    typeof Worker !== "undefined" &&
+    typeof OffscreenCanvas !== "undefined" &&
+    typeof createImageBitmap === "function" &&
+    "transferControlToOffscreen" in canvas
+
+  if (canUseWorker) {
+    try {
+      worker = new Worker(new URL("./ditherScene.worker.ts", import.meta.url), {
+        type: "module",
+      })
+      worker.onerror = abandonWorker
+      const offscreen = canvas.transferControlToOffscreen()
+      worker.postMessage({ type: "init", canvas: offscreen }, [offscreen])
+    } catch {
+      if (worker) abandonWorker()
+      else renderOnMainThread(canvas)
+    }
+  } else {
+    renderOnMainThread(canvas)
+  }
 
   const source = new Image()
   source.decoding = "async"
   source.src = spriteUrl
   source
     .decode()
-    .then(() => {
+    .then(async () => {
       sprite = source
+      if (worker) {
+        try {
+          const bitmap = await createImageBitmap(source)
+          worker?.postMessage(
+            { type: "sprite", bitmap, width: bitmap.width, height: bitmap.height },
+            [bitmap],
+          )
+        } catch {
+          abandonWorker()
+        }
+      }
+      renderer?.setSprite(source, source.naturalWidth, source.naturalHeight)
       onLoad()
     })
     .catch(() => {})
 
   // Picks a resolution so each dithered cell is about `cell` CSS pixels wide.
   function resize(cssWidth: number, cell: number) {
-    const nextWidth = Math.max(96, Math.round(cssWidth / cell))
-    const nextHeight = Math.round((nextWidth * 9) / 16)
-    if (!ctx || (nextWidth === width && nextHeight === height)) return
-    width = canvas.width = sampler.width = nextWidth
-    height = canvas.height = sampler.height = nextHeight
-    image = ctx.createImageData(width, height)
-    pixels = new Uint32Array(image.data.buffer)
+    const width = Math.max(96, Math.round(cssWidth / cell))
+    const height = Math.round((width * 9) / 16)
+    if (size && size[0] === width && size[1] === height) return
+    size = [width, height]
+    worker?.postMessage({ type: "resize", width, height })
+    renderer?.resize(width, height)
   }
 
-  function render({ frame, zoom, panX, panY, reveal, grain }: SceneState) {
-    if (!ctx || !samplerCtx || !image || !pixels) return
-    if (!sprite) {
-      pixels.fill(INK)
-      ctx.putImageData(image, 0, 0)
-      return
-    }
-
-    const frameWidth = sprite.naturalWidth
-    const frameHeight = sprite.naturalHeight / SPRITE_FRAMES
-    const cropWidth = frameWidth / zoom
-    const cropHeight = frameHeight / zoom
-    samplerCtx.drawImage(
-      sprite,
-      (frameWidth - cropWidth) * (0.5 + panX),
-      frame * frameHeight + (frameHeight - cropHeight) * (0.5 + panY),
-      cropWidth,
-      cropHeight,
-      0,
-      0,
-      width,
-      height,
-    )
-    ditherInto(samplerCtx.getImageData(0, 0, width, height).data, pixels, width, height, {
-      gain: GAIN,
-      lift: LIFT,
-      grain,
-      reveal,
-    })
-    ctx.putImageData(image, 0, 0)
+  function render(next: SceneState) {
+    state = next
+    worker?.postMessage({ type: "render", state: next })
+    renderer?.render(next)
   }
 
   return { resize, render }

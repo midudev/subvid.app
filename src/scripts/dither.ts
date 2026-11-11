@@ -82,6 +82,9 @@ export function ditherInto(
   height: number,
   { gain = 1, lift = 0, grain = 0, reveal = 1 }: DitherOptions = {},
 ) {
+  // xorshift32, seeded per call: the grain runs for every pixel of every
+  // frame and only has to look random, at about half the cost of Math.random.
+  let noise = (Math.random() * 4294967296) | 1
   for (let y = 0; y < height; y++) {
     const row = y * width
     for (let x = 0; x < width; x++) {
@@ -95,7 +98,12 @@ export function ditherInto(
         continue
       }
       let offset = (BAYER[(y & 7) * 8 + (x & 7)] - 0.5) * SPREAD
-      if (grain > 0) offset += (Math.random() - 0.5) * grain
+      if (grain > 0) {
+        noise ^= noise << 13
+        noise ^= noise >>> 17
+        noise ^= noise << 5
+        offset += ((noise >>> 0) / 4294967296 - 0.5) * grain
+      }
       const r = (source[i * 4] / 255) * gain + lift + offset
       const g = (source[i * 4 + 1] / 255) * gain + lift + offset
       const b = (source[i * 4 + 2] / 255) * gain + lift + offset

@@ -100,8 +100,8 @@ const bars = Array.from({ length: BARS }, (_, index) => {
   </div>
 
   <figcaption class="demo-status">
-    <span class="demo-status-text">{demo.reading}</span>
-    <span class="demo-time">00:00:00,000</span>
+    <span class="demo-status-text"><span class="demo-status-sizer">{demo.reading}</span><span class="demo-status-value">{demo.reading}</span></span>
+    <span class="demo-time"><span class="demo-time-value">00:00:00,000</span></span>
   </figcaption>
 </figure>
 

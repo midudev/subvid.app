@@ -99,6 +99,27 @@ function loadEditor() {
   return editorLoading;
 }
 
+// The dithered "reading" effect over the config preview. It only observes the
+// progress UI, so it can be created any time after a file is picked.
+let previewReaderLoading: Promise<void> | null = null;
+function loadPreviewReader() {
+  previewReaderLoading ??= import("@/scripts/previewReader.ts")
+    .then(({ createPreviewReader }) => {
+      createPreviewReader({
+        stage: ui.stageConfig,
+        preview: ui.configPreview,
+        video: ui.configVideo,
+        progress: ui.configProgress,
+        track: ui.configProgressTrack,
+        fill: ui.configProgressFill,
+      });
+    })
+    .catch(() => {
+      previewReaderLoading = null;
+    });
+  return previewReaderLoading;
+}
+
 type TranslationService = ReturnType<typeof createTranslationService>;
 let translationService: TranslationService | null = null;
 let translationLoading: Promise<TranslationService> | null = null;
@@ -286,10 +307,13 @@ const uploadStageController = createUploadStageController({
   renderSegments: () => editor?.renderSegments(),
   enableExports,
   resetHistory: () => editor?.resetHistory(),
-  startEarlyTranscription: (file) =>
-    configStageController.startEarlyTranscription(file),
+  startEarlyTranscription: (file) => {
+    void loadPreviewReader();
+    configStageController.startEarlyTranscription(file);
+  },
   resetTranscriptionCache: () =>
     configStageController.resetTranscriptionCache(),
+  generate: () => void configStageController.generate(),
 });
 
 const videoExporterOptions = (): Parameters<typeof createVideoExporter>[0] => ({
