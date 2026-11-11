@@ -571,8 +571,8 @@ export const ui = {
       translatingTo: "Traduciendo a {lang}\u2026",
       segCount: "{n} líneas",
       transcript: {
-        hint: "Edita o borra texto sin cambiar el vídeo. Selecciona palabras y pulsa Cortar del video para recortarlo.",
-        cutAction: "Cortar del video",
+        hint: "Edita o borra texto sin cambiar el vídeo. Selecciona palabras y pulsa Cortar del vídeo para recortarlo.",
+        cutAction: "Cortar del vídeo",
         cutSummary: "{time} s cortados del vídeo",
         cutOnSource: "Corta el vídeo desde la transcripción en {lang} \u2192",
         restore: "Cortado del vídeo \u00B7 clic para restaurar",

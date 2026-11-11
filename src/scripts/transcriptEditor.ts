@@ -27,7 +27,13 @@ type CaretInfo = {
   inside?: { word: number; offset: number; span: HTMLElement }
 }
 type CaretMark = { chars: number; space: boolean }
-type Token = { text: string; sources: number[]; word?: SubtitleWord }
+type Token = {
+  text: string
+  sources: number[]
+  word?: SubtitleWord
+  /** Where a brand-new word goes when it has no deleted word's time to take. */
+  at?: number
+}
 
 type TranscriptEditorOptions = {
   root: HTMLElement
@@ -865,11 +871,13 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
       const kept = group.findIndex((token) => token.text === original.text)
       if (kept >= 0) {
         group.forEach((token, i) => {
-          const at = i < kept ? original.start : original.end
-          token.word =
-            i === kept
-              ? { start: original.start, end: original.end, text: token.text }
-              : { start: at, end: at, text: token.text }
+          if (i === kept)
+            token.word = {
+              start: original.start,
+              end: original.end,
+              text: token.text,
+            }
+          else token.at = i < kept ? original.start : original.end
         })
         return
       }
@@ -896,16 +904,35 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         text: token.text,
       }
     })
+    // A word typed where another was deleted takes over the time that one
+    // left behind, so retyping a word keeps it in sync with the audio.
+    const adopted = new Set<SubtitleWord>()
     let lastEnd: number | null = null
     const next = sequence.map((item, i) => {
       let word = "sources" in item ? item.word : item
       if (!word) {
+        const token = item as Token
         const following = sequence
           .slice(i + 1)
           .map((rest) => ("sources" in rest ? rest.word : rest))
           .find(Boolean)
-        const at = lastEnd ?? following?.start ?? seg.start
-        word = { start: at, end: at, text: (item as Token).text }
+        const from = (lastEnd ?? -Infinity) - 0.001
+        const to = (following?.start ?? Infinity) + 0.001
+        const anchor = oldWords.find(
+          (old) =>
+            !old.cut &&
+            !old.text.trim() &&
+            !adopted.has(old) &&
+            old.start >= from &&
+            old.end <= to,
+        )
+        if (anchor) {
+          adopted.add(anchor)
+          word = { start: anchor.start, end: anchor.end, text: token.text }
+        } else {
+          const at = token.at ?? lastEnd ?? following?.start ?? seg.start
+          word = { start: at, end: at, text: token.text }
+        }
       }
       lastEnd = word.end
       return word
@@ -916,7 +943,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     const represented = new Set(tokens.flatMap((token) => token.sources))
     const retained = new Set(sequence.filter((item) => !("sources" in item)))
     oldWords.forEach((word, index) => {
-      if (represented.has(index) || retained.has(word)) return
+      if (represented.has(index) || retained.has(word) || adopted.has(word))
+        return
       const anchor = word.cut ? word : { ...word, text: "" }
       const at = next.findIndex((item) => item.start >= anchor.start)
       next.splice(at < 0 ? next.length : at, 0, anchor)
@@ -1092,7 +1120,6 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         handleDelete(event)
         return
       }
-      if (event.isComposing) return
       const range = selectionRange()
       const target = event.getTargetRanges?.()[0]
       const replacing = range && !range.collapsed ? range : null
