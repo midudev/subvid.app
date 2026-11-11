@@ -8,6 +8,12 @@ import { useTranslations } from "@/i18n/ui"
 const t = useTranslations(Astro.currentLocale)
 // Each word gets its own index so the title "plays" like a word-by-word caption.
 const titleWords = t.hero.title.split(" ")
+// One-click sample clips (public/demos): same order as `t.hero.samples`.
+const samples = [
+  { id: "space", lang: "EN", duration: "0:08" },
+  { id: "iss", lang: "ES", duration: "0:09" },
+  { id: "orbit", lang: "EN", duration: "0:09" },
+]
 ---
 
 <section id="stage-upload" class="stage-upload">
@@ -45,6 +51,38 @@ const titleWords = t.hero.title.split(" ")
       <span id="dropzone-hint" class="dz-hint" aria-live="polite">
         {t.hero.dropHint}
       </span>
+    </div>
+
+    <div class="samples">
+      <p class="samples-head">
+        <span>{t.hero.samplesLabel}</span>
+        <span class="samples-credit">{t.hero.samplesCredit}</span>
+      </p>
+      <ul class="samples-list">
+        {
+          samples.map((sample, index) => (
+            <li>
+              <button
+                type="button"
+                class="sample"
+                data-sample={`/demos/${sample.id}.mp4`}
+              >
+                <span class="sample-thumb">
+                  <img
+                    src={`/demos/${sample.id}.webp`}
+                    alt=""
+                    width="480"
+                    height="270"
+                    decoding="async"
+                  />
+                  <span class="sample-time">{sample.lang} · {sample.duration}</span>
+                </span>
+                <span class="sample-title">{t.hero.samples[index]}</span>
+              </button>
+            </li>
+          ))
+        }
+      </ul>
     </div>
   </div>
 

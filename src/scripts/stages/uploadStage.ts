@@ -1,3 +1,4 @@
+import { $$ } from "@/scripts/dom.ts";
 import { prettifyBytes } from "@/scripts/file.ts";
 import type { Stage } from "@/scripts/stageManager.ts";
 import type { ui as appUi } from "@/scripts/ui.ts";
@@ -20,6 +21,7 @@ type UploadStageOptions = {
   resetHistory: () => void;
   startEarlyTranscription: (file: File) => void;
   resetTranscriptionCache: () => void;
+  generate: () => void;
 };
 
 function isVideoFile(file: File) {
@@ -58,6 +60,7 @@ export function createUploadStageController({
   resetHistory,
   startEarlyTranscription,
   resetTranscriptionCache,
+  generate,
 }: UploadStageOptions) {
   let dragDepth = 0;
   let unsupportedTimer: number | undefined;
@@ -262,8 +265,53 @@ export function createUploadStageController({
     });
   }
 
+  // Sample clips are fetched once and handed over as if the user had picked
+  // the file; hovering a sample starts the download ahead of the click.
+  const sampleFiles = new Map<string, Promise<File>>();
+  function loadSample(url: string) {
+    let pending = sampleFiles.get(url);
+    if (!pending) {
+      pending = fetch(url).then(async (response) => {
+        if (!response.ok) throw new Error(`Sample ${url}: ${response.status}`);
+        const blob = await response.blob();
+        const name = url.slice(url.lastIndexOf("/") + 1);
+        return new File([blob], name, { type: blob.type || "video/mp4" });
+      });
+      pending.catch(() => sampleFiles.delete(url));
+      sampleFiles.set(url, pending);
+    }
+    return pending;
+  }
+
+  function wireSamples() {
+    const buttons = $$<HTMLButtonElement>("[data-sample]", ui.stageUpload);
+    for (const button of buttons) {
+      const url = button.dataset.sample || "";
+      const warm = () => void loadSample(url).catch(() => {});
+      button.addEventListener("pointerenter", warm);
+      button.addEventListener("focus", warm);
+      button.addEventListener("click", async () => {
+        if (button.getAttribute("aria-busy") === "true") return;
+        button.setAttribute("aria-busy", "true");
+        try {
+          const file = await loadSample(url);
+          // A file dropped while the sample was downloading wins.
+          if (ui.stageUpload.hidden) return;
+          handleSelectedFile(file);
+          // Samples skip the wait on the options: they go straight to the editor.
+          generate();
+        } catch (error) {
+          console.warn("[samples] could not load", url, error);
+        } finally {
+          button.removeAttribute("aria-busy");
+        }
+      });
+    }
+  }
+
   function wireUploadStage() {
     attachGlobalDrop();
+    wireSamples();
     ui.dropzone.addEventListener("click", () => ui.input.click());
     ui.dropzone.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {

@@ -35,6 +35,9 @@ export const ui = {
       dropLabel: "Drop your video or audio here",
       dropButton: "Choose file",
       dropHint: "MP4, MOV, WebM, MKV, MP3, WAV or OGG",
+      samplesLabel: "Or try it with a sample",
+      samplesCredit: "Clips: NASA",
+      samples: ["How big is space?", "Greetings from the ISS", "Life in orbit"],
       steps: [
         {
           title: "Upload",
@@ -354,6 +357,9 @@ export const ui = {
       dropLabel: "Suelta aquí tu vídeo o audio",
       dropButton: "Elegir archivo",
       dropHint: "MP4, MOV, WebM, MKV, MP3, WAV u OGG",
+      samplesLabel: "O pruébalo con un ejemplo",
+      samplesCredit: "Clips: NASA",
+      samples: ["El tamaño del espacio", "Saludos desde la ISS", "La vida en órbita"],
       steps: [
         {
           title: "Sube",
