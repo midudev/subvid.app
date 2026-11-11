@@ -259,7 +259,7 @@ export function createEditorSegmentsController(options: EditorSegmentsOptions) {
     if (total && activeLang === detectedLang) {
       ui.transcriptHint.textContent = cutSeconds
         ? tt("transcript.cutSummary", { time: cutSeconds.toFixed(1) })
-        : tt("transcript.hint")
+        : tt(transcript.wordEdit() ? "transcript.wordEditHint" : "transcript.hint")
     } else if (total && orderedLangs.includes(detectedLang)) {
       // Cuts are made on the transcription, the only track with word timings.
       const link = document.createElement("button")

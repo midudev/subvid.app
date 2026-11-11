@@ -178,6 +178,7 @@ export function createEditor(ctx: EditorContext) {
       updateCaption();
       scheduleTimelineRender();
     },
+    onWordEditChange: () => editorSegmentsController.renderTranscriptMeta(),
     onStructureChange: () => {
       refreshCuts();
       editorSegmentsController.renderTranscriptMeta();

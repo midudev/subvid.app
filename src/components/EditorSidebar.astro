@@ -1,4 +1,5 @@
 ---
+import Scissors from "@/assets/svg/scissors.svg"
 import { useTranslations } from "@/i18n/ui"
 
 const t = useTranslations(Astro.currentLocale)
@@ -18,12 +19,14 @@ const t = useTranslations(Astro.currentLocale)
     <button
       id="transcript-cut-btn"
       type="button"
-      class="btn-ghost tx-cut-button"
+      class="tx-word-edit"
       aria-controls="transcript"
+      aria-pressed="false"
+      aria-label={t.client.transcript.wordEdit}
+      title={t.client.transcript.wordEdit}
       hidden
-      disabled
     >
-      {t.client.transcript.cutAction}
+      <Scissors />
     </button>
     <span id="lang-add-status" class="lang-add-status" hidden></span>
   </div>

@@ -1144,13 +1144,40 @@ video {
   color: var(--danger);
 }
 
-.tx-cut-button {
-  min-height: 2.75rem;
-  max-width: 100%;
-  white-space: normal;
+/* Word editing toggle: while on, deleting words cuts them from the video. */
+.tx-word-edit {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease;
 }
-.tx-cut-button[hidden] {
+.tx-word-edit[hidden] {
   display: none;
+}
+.tx-word-edit:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.tx-word-edit[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface-3);
+  border-color: var(--border);
+}
+.tx-word-edit svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 /* Transcript: one editable document, a line per subtitle and a span per word. */

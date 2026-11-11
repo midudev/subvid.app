@@ -1,6 +1,6 @@
 // The transcript as a single editable document: one line per subtitle and one
-// span per word. Text edits preserve the media; only the explicit cut action
-// removes selected words from the video. Translation tracks are plain text.
+// span per word. Text edits preserve the media; with word editing on, deleting
+// words cuts them from the video. Translation tracks are plain text.
 import { keptParts, type TimeRange } from "@/scripts/cuts.ts"
 import {
   estimatedWordsForSegment,
@@ -53,6 +53,8 @@ type TranscriptEditorOptions = {
   onTextChange: () => void
   /** Words were cut/restored or lines split/merged. */
   onStructureChange: () => void
+  /** Word editing was switched on or off. */
+  onWordEditChange: () => void
 }
 
 const TEXT_EDIT_IDLE_MS = 1200
@@ -94,6 +96,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     seek,
     onTextChange,
     onStructureChange,
+    onWordEditChange,
   } = options
 
   let renderedLang = ""
@@ -103,7 +106,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
   let wordTimesDirty = true
   let currentWord: HTMLElement | null = null
   let activeLine: HTMLElement | null = null
-  let cutSelection: Range | null = null
+  /** Word editing: deleting words cuts them from the video. */
+  let wordEdit = false
 
   const segments = () => segmentsFor(activeLang())
   const cutMode = () => !!activeLang() && activeLang() === sourceLang()
@@ -196,9 +200,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
 
   function render() {
     commitPendingEdit()
-    cutSelection = null
     cutButton.hidden = !cutMode() || !segments().length
-    cutButton.disabled = true
     const segs = segments()
     renderedLang = activeLang()
     currentWord = null
@@ -555,9 +557,37 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     onTextChange()
   }
 
+  /** Word editing: a deletion cuts whole words from the video. */
+  function cutByWords(range: Range, type: string) {
+    const forward = type.endsWith("Forward")
+    let refs: WordRef[]
+    if (!range.collapsed) refs = selectedWords(range)
+    else {
+      const info = caretInfo(range)
+      if (!info) return false
+      const pivot = info.inside?.word ?? (forward ? info.after : info.before)
+      // At the edge of a line the deletion joins it with its neighbour.
+      if (pivot == null) return false
+      refs = /Line(Backward|Forward)$/.test(type)
+        ? (segments()[info.line]?.words || [])
+            .map((_, word) => ({ line: info.line, word }))
+            .filter(({ word }) => (forward ? word >= pivot : word <= pivot))
+        : [{ line: info.line, word: pivot }]
+    }
+    // Words typed by hand have no media of their own: delete them as text.
+    const timed = refs.filter(({ line, word }) => {
+      const item = segments()[line]?.words?.[word]
+      return item && !item.cut && item.text.trim() && item.end > item.start
+    })
+    if (!timed.length) return false
+    cutWords(timed, range.collapsed && forward ? "after" : "before")
+    return true
+  }
+
   function handleDelete(event: InputEvent) {
     let range = selectionRange()
     if (!range) return
+    if (wordEdit && cutByWords(range, event.inputType)) return
     if (range.collapsed) {
       const forward = event.inputType.endsWith("Forward")
       const info = caretInfo(range)
@@ -693,34 +723,11 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     reconcileFromSelection()
   }
 
-  function updateCutSelection() {
-    const selection = selectionRange()
-    if (selection && !selection.collapsed) cutSelection = selection.cloneRange()
-    else if (document.activeElement !== cutButton) cutSelection = null
-    cutButton.disabled =
-      !cutMode() ||
-      !cutSelection ||
-      !selectedWords(cutSelection).some(({ line, word }) => {
-        const item = segments()[line]?.words?.[word]
-        return item && !item.cut && item.end > item.start
-      })
-  }
-
-  function cutSelectedWords() {
-    if (
-      !cutMode() ||
-      !cutSelection ||
-      !root.contains(cutSelection.commonAncestorContainer)
-    )
-      return
-    const refs = selectedWords(cutSelection).filter(({ line, word }) => {
-      const item = segments()[line]?.words?.[word]
-      return item && !item.cut && item.end > item.start
-    })
-    root.focus()
-    cutWords(refs, "before")
-    cutSelection = null
-    cutButton.disabled = true
+  function toggleWordEdit() {
+    wordEdit = !wordEdit
+    cutButton.setAttribute("aria-pressed", String(wordEdit))
+    root.classList.toggle("is-word-edit", wordEdit)
+    onWordEditChange()
   }
 
   // ── Lines ──
@@ -1078,18 +1085,9 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
   // ── Events ──
 
   function wire() {
-    document.addEventListener("selectionchange", updateCutSelection)
+    // Keep the caret and selection in the transcript when toggling.
     cutButton.addEventListener("pointerdown", (event) => event.preventDefault())
-    cutButton.addEventListener("click", cutSelectedWords)
-    root.addEventListener("focusout", (event) => {
-      if (
-        event.relatedTarget !== cutButton &&
-        !root.contains(event.relatedTarget as Node)
-      ) {
-        cutSelection = null
-        cutButton.disabled = true
-      }
-    })
+    cutButton.addEventListener("click", toggleWordEdit)
     root.addEventListener("beforeinput", (event: InputEvent) => {
       const type = event.inputType
       if (type === "historyUndo" || type === "historyRedo") {
@@ -1159,7 +1157,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
       if (!cutMode()) return
       event.preventDefault()
       event.clipboardData.setData("text/plain", selectedPlainText(range))
-      deleteText(range)
+      if (!wordEdit || !cutByWords(range, "deleteByCut")) deleteText(range)
     })
     root.addEventListener("dragstart", (event) => event.preventDefault())
 
@@ -1216,7 +1214,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     commitPendingEdit,
     highlightTime,
     setActiveLine,
-    cutSelectedWords,
+    wordEdit: () => wordEdit,
   }
 }
 

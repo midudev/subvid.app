@@ -254,8 +254,9 @@ export const ui = {
       translatingTo: "Translating to {lang}\u2026",
       segCount: "{n} lines",
       transcript: {
-        hint: "Edit or delete text without changing the video. Select words and choose Cut from video to trim it.",
-        cutAction: "Cut from video",
+        hint: "Edit or delete text without changing the video. Turn on word editing to cut it.",
+        wordEdit: "Word editing: deleting words cuts them from the video",
+        wordEditHint: "Word editing on \u00B7 deleting words cuts the video.",
         cutSummary: "{time} s cut from the video",
         cutOnSource: "Cut the video from the {lang} transcription \u2192",
         restore: "Cut from the video \u00B7 click to restore",
@@ -577,8 +578,9 @@ export const ui = {
       translatingTo: "Traduciendo a {lang}\u2026",
       segCount: "{n} líneas",
       transcript: {
-        hint: "Edita o borra texto sin cambiar el vídeo. Selecciona palabras y pulsa Cortar del vídeo para recortarlo.",
-        cutAction: "Cortar del vídeo",
+        hint: "Edita o borra texto sin cambiar el vídeo. Activa la edición por palabras para recortarlo.",
+        wordEdit: "Edición por palabras: borrar palabras las corta del vídeo",
+        wordEditHint: "Edición por palabras activa \u00B7 borrar palabras corta el vídeo.",
         cutSummary: "{time} s cortados del vídeo",
         cutOnSource: "Corta el vídeo desde la transcripción en {lang} \u2192",
         restore: "Cortado del vídeo \u00B7 clic para restaurar",
