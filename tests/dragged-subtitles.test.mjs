@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { cutRangesFromSegments } from "../src/scripts/cuts.ts"
-import { estimatedWordsForSegment, wordsForDraggedBlock } from "../src/scripts/subtitles.ts"
+import {
+  editTranslatedWords,
+  estimatedWordsForSegment,
+  wordsForDraggedBlock,
+} from "../src/scripts/subtitles.ts"
 
 test("dragging after deleting repeated words starts the highlight at the drop time", () => {
   const text = "recompensar en público porque no la"
@@ -51,4 +55,19 @@ test("unusable word times are distributed by the length of the visible text", ()
   const translated = { start: 5, end: 7, text: "uno a" }
   assert.deepEqual(estimatedWordsForSegment(translated).map(w => [w.start, w.end]),
     [[5, 6.5], [6.5, 7]])
+})
+
+test("expanding a translated word before a deleted anchor borrows from that word, not the next", () => {
+  const seg = { start: 0, end: 6, text: "foo bar baz" }
+  seg.words = editTranslatedWords(seg, "foo baz", 4)
+  seg.text = "foo baz"
+  seg.words = editTranslatedWords(seg, "hello world baz", 11)
+  seg.text = "hello world baz"
+
+  const visible = estimatedWordsForSegment(seg)
+  assert.deepEqual(visible.map((w) => [w.text, w.start, w.end]), [
+    ["hello", 0, 1],
+    ["world", 1, 2],
+    ["baz", 4, 6],
+  ])
 })

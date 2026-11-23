@@ -494,13 +494,24 @@ export function editTranslatedWords(
   // reuse any empty slots left at the caret by an earlier deletion.
   const hasReplacedWords = slots.some((word) => word.text.trim())
   let index = 0
-  const changed = slots.map((word) => {
+  let lastAssigned = -1
+  const changed = slots.map((word, slotIndex) => {
     if (hasReplacedWords && !word.text.trim()) return word
+    if (index < replacement.length) lastAssigned = slotIndex
     return { ...word, text: replacement[index++] ?? "" }
   })
-  const at = changed.at(-1)?.end ?? words[first - 1]?.end ?? segment.start
-  for (const part of replacement.slice(index))
-    changed.push({ start: at, end: at, text: part })
+  const overflow = replacement.slice(index)
+  if (overflow.length) {
+    const insertAt = lastAssigned >= 0 ? lastAssigned + 1 : 0
+    const at =
+      (lastAssigned >= 0 ? changed[lastAssigned].end : words[first - 1]?.end) ??
+      segment.start
+    changed.splice(
+      insertAt,
+      0,
+      ...overflow.map((part) => ({ start: at, end: at, text: part })),
+    )
+  }
 
   const next = [...words.slice(0, first), ...changed, ...words.slice(last)]
   return timeInsertedWords(next, segment.start, segment.end)
