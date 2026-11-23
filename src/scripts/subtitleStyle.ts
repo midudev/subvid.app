@@ -1,5 +1,5 @@
 import { $$ } from "@/scripts/dom.ts"
-import { estimatedWordsForSegment } from "@/scripts/subtitles.ts"
+import { estimatedWordsForSegment, type SubtitleWord } from "@/scripts/subtitles.ts"
 
 export const FONT_STACKS: Record<string, string> = {
   sans: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
@@ -338,7 +338,7 @@ export function createSubtitleStyleController({
   const captionBoxMap = new Map<string, HTMLElement>()
   const captionTextCache = new WeakMap<
     HTMLElement,
-    { key: string; words?: Array<{ start: number; text: string }> }
+    { key: string; sourceWords?: SubtitleWord[]; words?: Array<{ start: number; text: string }> }
   >()
   const captionStyleVersion = new WeakMap<HTMLElement, number>()
 
@@ -544,7 +544,7 @@ export function createSubtitleStyleController({
 
     const { start, end } = track.segment
     const key = `words:${start}:${end}:${track.text}`
-    let words = cached?.key === key ? cached.words : undefined
+    let words = cached?.key === key && cached.sourceWords === track.segment.words ? cached.words : undefined
     let layoutChanged = false
     if (!words) {
       layoutChanged = true
@@ -561,7 +561,7 @@ export function createSubtitleStyleController({
       } else {
         box.textContent = track.text
       }
-      captionTextCache.set(box, { key, words })
+      captionTextCache.set(box, { key, words, sourceWords: track.segment.words })
     }
 
     // Same line as last frame: only advance the spoken highlight.

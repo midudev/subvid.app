@@ -1,6 +1,6 @@
 import { cutAt, type TimeRange } from "@/scripts/cuts.ts"
 import { $, $$ } from "@/scripts/dom.ts"
-import { formatClock } from "@/scripts/subtitles.ts"
+import { findSegmentIndexAt, formatClock, wordsForDraggedBlock } from "@/scripts/subtitles.ts"
 import { peakBetween, type Waveform } from "@/scripts/waveform.ts"
 
 type TimelineTrack = {
@@ -91,36 +91,6 @@ export function createTimelineController(options: TimelineOptions) {
   let waveRaf = 0
   let waveColor = ""
   let lastClockText = ""
-
-  // Binary search for the segment containing `time` (segments are sorted by start).
-  // Falls back to scanning neighbors if overlapping segments exist.
-  function findSegmentIndexAt(
-    segments: any[],
-    time: number,
-    requireText = false,
-  ): number {
-    let lo = 0
-    let hi = segments.length - 1
-    let candidate = -1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (segments[mid].start <= time) {
-        candidate = mid
-        lo = mid + 1
-      } else {
-        hi = mid - 1
-      }
-    }
-    for (let i = candidate; i >= 0; i--) {
-      const seg = segments[i]
-      if (time <= seg.end) {
-        if (!requireText || seg.text?.trim()) return i
-      } else if (candidate - i > 4) {
-        break
-      }
-    }
-    return -1
-  }
 
   function escapeHtml(value: string) {
     return String(value)
@@ -728,8 +698,7 @@ export function createTimelineController(options: TimelineOptions) {
         block,
         mode: handle ? handle.dataset.edge : "move",
         startX: event.clientX,
-        origStart: seg.start,
-        origEnd: seg.end,
+        original: { ...seg },
         moved: false,
         before: snapshotSegments(),
       }
@@ -741,20 +710,24 @@ export function createTimelineController(options: TimelineOptions) {
       if (!tlDrag) return
       const dx = event.clientX - tlDrag.startX
       const dt = dx / tlPxPerSec
-      if (Math.abs(dx) > 3) tlDrag.moved = true
-      const dur0 = tlDrag.origEnd - tlDrag.origStart
-      const { seg, mode } = tlDrag
+      if (!tlDrag.moved && Math.abs(dx) <= 3) return
+      tlDrag.moved = true
+      const { seg, mode, original } = tlDrag
+      const dur0 = original.end - original.start
       if (mode === "move") {
-        const ns = Math.max(0, tlDrag.origStart + dt)
+        const ns = Math.max(0, original.start + dt)
         seg.start = ns
         seg.end = ns + dur0
       } else if (mode === "start") {
         seg.start = Math.max(
           0,
-          Math.min(tlDrag.origEnd - TL_MIN_DUR, tlDrag.origStart + dt),
+          Math.min(original.end - TL_MIN_DUR, original.start + dt),
         )
       } else {
-        seg.end = Math.max(tlDrag.origStart + TL_MIN_DUR, tlDrag.origEnd + dt)
+        seg.end = Math.max(original.start + TL_MIN_DUR, original.end + dt)
+      }
+      if (original.words) {
+        seg.words = wordsForDraggedBlock(original, seg.start, seg.end)
       }
       tlDrag.block.style.left = `${seg.start * tlPxPerSec}px`
       tlDrag.block.style.width = `${(seg.end - seg.start) * tlPxPerSec}px`
