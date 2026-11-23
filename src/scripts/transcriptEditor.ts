@@ -3,7 +3,10 @@
 // words cuts them from the video. Translation tracks are plain text.
 import { keptParts, type TimeRange } from "@/scripts/cuts.ts"
 import {
+  editTranslatedWords,
   estimatedWordsForSegment,
+  splitWord,
+  timeInsertedWords,
   wordsText,
   type SubtitleSegment,
   type SubtitleWord,
@@ -481,6 +484,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     structuralChange(() => {
       for (let i = from; i < to; i += 1)
         if (seg.words![i]) seg.words![i].cut = false
+      // Moving the block can leave a formerly leading or trailing cut at its edge.
+      seg.words = timeInsertedWords(seg.words!, seg.start, seg.end)
       syncText(seg)
       renderLineAt(line)
     })
@@ -577,7 +582,9 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     // Words typed by hand have no media of their own: delete them as text.
     const timed = refs.filter(({ line, word }) => {
       const item = segments()[line]?.words?.[word]
-      return item && !item.cut && item.text.trim() && item.end > item.start
+      if (!item || item.cut || !item.text.trim()) return false
+      const media = item.media ?? item
+      return media.end > media.start
     })
     if (!timed.length) return false
     cutWords(timed, range.collapsed && forward ? "after" : "before")
@@ -678,27 +685,19 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         const word = segments()[hit.line].words![hit.word]
         word.text = word.text.slice(0, hit.from) + word.text.slice(hit.to)
       }
-      const word = segments()[first.line].words![first.word]
-      word.text = prefix + text + (first.line === last.line ? suffix : "")
-      if (first.line === last.line && first !== last)
-        segments()[last.line].words![last.word].text = ""
-      // Preserve the source interval when a correction contains several words.
-      const parts = word.text.split(/\s+/).filter(Boolean)
-      if (parts.length > 1) {
-        const total = parts.reduce((sum, part) => sum + part.length, 0)
-        let cursor = word.start
-        segments()[first.line].words!.splice(
-          first.word,
-          1,
-          ...parts.map((part, i) => {
-            const end =
-              i === parts.length - 1
-                ? word.end
-                : cursor + ((word.end - word.start) * part.length) / total
-            const next = { start: cursor, end, text: part }
-            cursor = end
-            return next
-          }),
+      // Reuse the selected word intervals in order. Keep cut markers in place
+      // and leave unused slots as anchors for future corrections.
+      const firstLineWords = segments()[first.line].words!
+      const selected = hits.filter((hit) => hit.line === first.line)
+      const parts = (prefix + text + (first.line === last.line ? suffix : ""))
+        .split(/\s+/).filter(Boolean)
+      selected.forEach((hit, index) => {
+        firstLineWords[hit.word].text = parts[index] ?? ""
+      })
+      if (parts.length > selected.length) {
+        const tail = selected[selected.length - 1].word
+        firstLineWords.splice(
+          tail, 1, ...splitWord(firstLineWords[tail], parts.slice(selected.length - 1)),
         )
       }
       for (const index of new Set(hits.map((hit) => hit.line))) {
@@ -791,7 +790,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
 
   // Native typing lands wherever the browser puts it (inside a word span or in
   // the spaces between them). Every character is tagged with the word it came
-  // from, so retyped words keep their timing and new words get none.
+  // from, so corrections retain their source intervals.
   function reconcileLine(line: HTMLElement) {
     const index = Number(line.dataset.index)
     const seg = segments()[index]
@@ -862,7 +861,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     })
 
     // Timing: a word split in several tokens shares its time; merged words
-    // span all of theirs; brand-new words get a zero-length slot.
+    // span all of theirs; unassigned tokens are timed together below.
     const bySource = new Map<number, Token[]>()
     tokens.forEach((token) => {
       if (token.sources.length !== 1) return
@@ -873,39 +872,34 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     bySource.forEach((group, source) => {
       const original = oldWords[source]
       if (!original) return
-      // Typing a new word right next to an existing one lands in its span:
-      // the untouched word keeps its time and the new ones get none.
       const kept = group.findIndex((token) => token.text === original.text)
       if (kept >= 0) {
         group.forEach((token, i) => {
-          if (i === kept)
-            token.word = {
-              start: original.start,
-              end: original.end,
-              text: token.text,
-            }
+          if (i === kept) token.word = original
           else token.at = i < kept ? original.start : original.end
         })
-        return
+      } else {
+        const parts = splitWord(original, group.map((token) => token.text))
+        group.forEach((token, i) => {
+          token.word = parts[i]
+        })
       }
-      const total = group.reduce((sum, token) => sum + token.text.length, 0)
-      let cursor = original.start
-      group.forEach((token, i) => {
-        const end =
-          i === group.length - 1
-            ? original.end
-            : cursor +
-              ((original.end - original.start) * token.text.length) / total
-        token.word = { start: cursor, end, text: token.text }
-        cursor = end
-      })
     })
     tokens.forEach((token) => {
       if (token.sources.length < 2) return
       const merged = token.sources
         .map((source) => oldWords[source])
         .filter(Boolean)
+      const intervals = merged.map((word) => word.media ?? word)
+      const owned = intervals.filter((range) => range.end > range.start)
+      // A hand-typed word can be on a moved caption, far from the source.
+      // Its zero-length media interval must not enlarge a later video cut.
+      const media = owned.length ? owned : intervals.slice(0, 1)
       token.word = {
+        media: {
+          start: Math.min(...media.map((w) => w.start)),
+          end: Math.max(...media.map((w) => w.end)),
+        },
         start: Math.min(...merged.map((w) => w.start)),
         end: Math.max(...merged.map((w) => w.end)),
         text: token.text,
@@ -915,7 +909,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     // left behind, so retyping a word keeps it in sync with the audio.
     const adopted = new Set<SubtitleWord>()
     let lastEnd: number | null = null
-    const next = sequence.map((item, i) => {
+    const reconciled = sequence.map((item, i) => {
       let word = "sources" in item ? item.word : item
       if (!word) {
         const token = item as Token
@@ -935,7 +929,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
         )
         if (anchor) {
           adopted.add(anchor)
-          word = { start: anchor.start, end: anchor.end, text: token.text }
+          word = { ...anchor, text: token.text }
         } else {
           const at = token.at ?? lastEnd ?? following?.start ?? seg.start
           word = { start: at, end: at, text: token.text }
@@ -953,10 +947,11 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
       if (represented.has(index) || retained.has(word) || adopted.has(word))
         return
       const anchor = word.cut ? word : { ...word, text: "" }
-      const at = next.findIndex((item) => item.start >= anchor.start)
-      next.splice(at < 0 ? next.length : at, 0, anchor)
+      const at = reconciled.findIndex((item) => item.start >= anchor.start)
+      reconciled.splice(at < 0 ? reconciled.length : at, 0, anchor)
     })
 
+    const next = timeInsertedWords(reconciled, seg.start, seg.end)
     const structural =
       next.length !== oldWords.length ||
       next.some(
@@ -995,6 +990,11 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
     const text = (line.textContent || "").replace(/\n/g, " ")
     if (text === seg.text) return
     beginTextEdit()
+    const range = selectionRange()
+    const caret = range && line.contains(range.startContainer)
+      ? textOffsetWithin(line, range.startContainer, range.startOffset)
+      : text.length
+    seg.words = editTranslatedWords(seg, text, caret)
     seg.text = text
     onTextChange()
   }

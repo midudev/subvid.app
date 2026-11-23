@@ -6,7 +6,7 @@ import {
   FONT_STACKS,
   hexToRgba,
 } from "@/scripts/subtitleStyle.ts"
-import { estimatedWordsForSegment } from "@/scripts/subtitles.ts"
+import { estimatedWordsForSegment, findSegmentIndexAt } from "@/scripts/subtitles.ts"
 
 const CAPTION_MAX_WIDTH_RATIO = 0.8
 
@@ -374,9 +374,7 @@ export function drawSubtitlesAt(
 ) {
   const boxes = renderTracks(segments)
     .map((track) => {
-      const seg = track.segments.find(
-        (s: any) => time >= s.start && time <= s.end && s.text?.trim(),
-      )
+      const seg = track.segments[findSegmentIndexAt(track.segments, time, true)]
       return seg
         ? layoutSubtitleBox(ctx, seg, track.role || "default", track.lang || "", w, h)
         : null

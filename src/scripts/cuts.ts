@@ -9,20 +9,22 @@ export function cutRangesFromSegments(
 ): TimeRange[] {
   const words = (segments || [])
     .flatMap((segment) => segment.words || [])
-    .sort((a, b) => a.start - b.start)
+    .sort((a, b) => (a.media ?? a).start - (b.media ?? b).start)
   const ranges: TimeRange[] = []
   let run: TimeRange | null = null
 
   // Consecutive cut words make a single range, so the silence between them
   // goes away too.
   for (const word of words) {
+    const media = word.media ?? word
+    if (media.end <= media.start) continue
     if (!word.cut) {
       run = null
       continue
     }
-    if (run) run.end = Math.max(run.end, word.end)
+    if (run) run.end = Math.max(run.end, media.end)
     else {
-      run = { start: word.start, end: word.end }
+      run = { start: media.start, end: media.end }
       ranges.push(run)
     }
   }

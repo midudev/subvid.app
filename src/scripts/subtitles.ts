@@ -1,4 +1,4 @@
-import { LANGS } from "@/scripts/languages.ts"
+import { LANGS } from "./languages.ts"
 
 export type SubtitleSegment = {
   start: number
@@ -12,6 +12,8 @@ export type SubtitleWord = {
   end: number
   /** Empty text retains an uncut time interval after a subtitle-only deletion. */
   text: string
+  /** Original media interval when caption timing differs (used for video cuts). */
+  media?: { start: number; end: number }
   /** Cut from the video in the transcript editor: kept for restoring, never shown. */
   cut?: boolean
 }
@@ -29,6 +31,34 @@ type SpeechRun = {
 
 const DEFAULT_SAMPLE_RATE = 16_000
 const SILENCE_BREAK_SECONDS = 0.55
+
+// Binary search for the segment containing `time` (segments are sorted by start).
+// Falls back to scanning neighbors if overlapping segments exist.
+export function findSegmentIndexAt(
+  segments: SubtitleSegment[],
+  time: number,
+  requireText = false,
+): number {
+  let lo = 0
+  let hi = segments.length - 1
+  let candidate = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (segments[mid].start <= time) {
+      candidate = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  for (let i = candidate; i >= 0; i--) {
+    const seg = segments[i]
+    if (time <= seg.end) {
+      if (!requireText || seg.text?.trim()) return i
+    }
+  }
+  return -1
+}
 
 export function formatSrtTime(seconds: number): string {
   const c = Math.max(0, Number.isFinite(seconds) ? seconds : 0)
@@ -305,45 +335,186 @@ function normalizeWordLevelSegments(chunks: any[], aspectRatio = 16 / 9): Subtit
   return segments
 }
 
+/** Keep media ownership when a display interval moves or lends time to a new word. */
+export function retimeWord(
+  word: SubtitleWord, start: number, end: number,
+): SubtitleWord {
+  if (start === word.start && end === word.end) return word
+  const media = word.media ?? { start: word.start, end: word.end }
+  return { ...word, start, end, media }
+}
+
+function wordWeight(text: string) {
+  return Math.max(1, text.replace(/[^\p{L}\p{N}]/gu, "").length)
+}
+
+/** Fit the spoken part of a dragged line to the block; media cuts keep their source times. */
+export function wordsForDraggedBlock(
+  original: SubtitleSegment,
+  start: number,
+  end: number,
+): SubtitleWord[] | undefined {
+  const words = original.words
+  if (!words?.length) return words
+  const isVisible = (word: SubtitleWord) => !word.cut && !!word.text.trim()
+  const visible = words.filter(isVisible)
+  const from = visible[0]?.start ?? original.start
+  const to = visible.at(-1)?.end ?? original.end
+  const usable = to > from && visible.every((word, i) =>
+    Number.isFinite(word.start) && Number.isFinite(word.end) &&
+    word.end > word.start && (i === 0 || word.start > visible[i - 1].start) &&
+    word.end <= to,
+  )
+  if (usable) {
+    const mapTime = (time: number) => {
+      if (time <= from) return start
+      if (time >= to) return end
+      return start + ((time - from) / (to - from)) * (end - start)
+    }
+    return words.map((word) => retimeWord(word, mapTime(word.start), mapTime(word.end)))
+  }
+
+  const slots = splitWord({ start, end, text: "" }, visible.map((word) => word.text))
+  let index = 0
+  let cursor = start
+  return words.map((word) => {
+    if (!isVisible(word)) return retimeWord(word, cursor, cursor)
+    const slot = slots[index++]
+    cursor = slot.end
+    return retimeWord(word, slot.start, slot.end)
+  })
+}
+
+/** Share an interval by text length, even when it is shorter than a video frame. */
+export function splitWord(word: SubtitleWord, parts: string[]): SubtitleWord[] {
+  const total = parts.reduce((sum, text) => sum + wordWeight(text), 0)
+  let used = 0
+  return parts.map((text) => {
+    const from = used / total
+    used += wordWeight(text)
+    const to = used / total
+    const slice = (range: { start: number; end: number }) => ({
+      start: range.start + (range.end - range.start) * from,
+      end: to === 1 ? range.end : range.start + (range.end - range.start) * to,
+    })
+    const part: SubtitleWord = { text, ...slice(word) }
+    if (word.media) part.media = slice(word.media)
+    return part
+  })
+}
+
+/** Give consecutive untimed words the gap, or borrow from one adjacent word. */
+export function timeInsertedWords(words: SubtitleWord[], start: number, end: number) {
+  const untimed = (word: SubtitleWord) =>
+    !word.cut && !!word.text.trim() && word.end <= word.start
+  const result = words.slice()
+  let i = 0
+  while (i < result.length) {
+    if (!untimed(result[i])) {
+      i++
+      continue
+    }
+    let first = i
+    while (i < result.length && untimed(result[i])) i++
+    let last = i
+    const previous = result[first - 1]
+    const following = result[last]
+    let from = previous?.end ?? start
+    let to = following?.start ?? end
+    // A cut or a deleted-word anchor reserves its interval. Only visible
+    // neighbours can lend time when the insertion touches that boundary.
+    if (to <= from && previous?.text.trim() && !previous.cut) {
+      first--
+      from = previous.start
+      to = Math.min(previous.end, following?.start ?? end)
+    } else if (to <= from && following?.text.trim() && !following.cut) {
+      last++
+      from = Math.max(following.start, previous?.end ?? start)
+      to = following.end
+    }
+    if (to <= from) continue
+    const parts = result.slice(first, last).map((word) => word.text)
+    const slots = splitWord({ start: from, end: to, text: "" }, parts)
+    slots.forEach((slot, offset) => {
+      const index = first + offset
+      result[index] = retimeWord(result[index], slot.start, slot.end)
+    })
+  }
+  return result
+}
+
 export function estimatedWordsForSegment(segment: SubtitleSegment): SubtitleWord[] {
   const text = String(segment.text || "").trim()
   if (!text) return []
-
-  const textWords = tokenizeSubtitleText(text)
-  const storedWords = Array.isArray(segment.words)
-    ? segment.words.filter((word) => !word.cut && word.text.trim())
-    : []
+  const start = Number.isFinite(segment.start) ? segment.start : 0
+  const end = Number.isFinite(segment.end) && segment.end > start ? segment.end : start + 2
+  const stored = segment.words?.filter((word) => !word.cut && word.text.trim())
+  const normalized = text.replace(/\s+/g, " ")
   if (
-    storedWords.length &&
-    wordsText(storedWords).replace(/\s+/g, " ") === text.replace(/\s+/g, " ")
+    stored?.length &&
+    (wordsText(stored) === normalized || stored.map((w) => w.text).join(" ") === normalized)
   ) {
-    return storedWords
+    // Speech refinement may trim a line past its first or last word.
+    const bounded = stored.map((word) => {
+      const wordStart = Math.max(start, Math.min(end, word.start))
+      const wordEnd = Math.max(wordStart, Math.min(end, word.end))
+      return retimeWord(word, wordStart, wordEnd)
+    })
+    return bounded.some((word) => word.end <= word.start)
+      ? timeInsertedWords(bounded, start, end)
+      : bounded
+  }
+  return splitWord({ start, end, text }, tokenizeSubtitleText(text))
+}
+
+/** Plain translated lines have no ASR word spans. Align the portion the user edited. */
+export function editTranslatedWords(
+  segment: SubtitleSegment, text: string, caret: number,
+) {
+  const words = segment.words ?? estimatedWordsForSegment(segment)
+  const old = words.filter((word) => word.text.trim())
+  const parts = tokenizeSubtitleText(text.trim())
+  // Match from the caret outward so deleting one of two identical words keeps
+  // the timing of the occurrence the user actually left in the document.
+  const afterCaret = tokenizeSubtitleText(text.slice(caret).trim()).length
+  let suffix = 0
+  const maxSuffix = Math.min(afterCaret, parts.length, old.length)
+  while (suffix < maxSuffix && parts.at(-suffix - 1) === old.at(-suffix - 1)?.text)
+    suffix++
+  let prefix = 0
+  const maxPrefix = Math.min(parts.length, old.length) - suffix
+  while (prefix < maxPrefix && parts[prefix] === old[prefix].text)
+    prefix++
+
+  const first = prefix ? words.indexOf(old[prefix - 1]) + 1 : 0
+  const last = suffix ? words.indexOf(old[old.length - suffix]) : words.length
+  const slots = words.slice(first, last)
+  const replacement = parts.slice(prefix, parts.length - suffix)
+  // For a correction, keep the edited words' slots. For a fresh insertion,
+  // reuse any empty slots left at the caret by an earlier deletion.
+  const hasReplacedWords = slots.some((word) => word.text.trim())
+  let index = 0
+  let lastAssigned = -1
+  const changed = slots.map((word, slotIndex) => {
+    if (hasReplacedWords && !word.text.trim()) return word
+    if (index < replacement.length) lastAssigned = slotIndex
+    return { ...word, text: replacement[index++] ?? "" }
+  })
+  const overflow = replacement.slice(index)
+  if (overflow.length) {
+    const insertAt = lastAssigned >= 0 ? lastAssigned + 1 : 0
+    const at =
+      (lastAssigned >= 0 ? changed[lastAssigned].end : words[first - 1]?.end) ??
+      segment.start
+    changed.splice(
+      insertAt,
+      0,
+      ...overflow.map((part) => ({ start: at, end: at, text: part })),
+    )
   }
 
-  const start = Number.isFinite(segment.start) ? segment.start : 0
-  const end = Math.max(
-    start + 0.35,
-    Number.isFinite(segment.end) ? segment.end : start + 2,
-  )
-  const duration = end - start
-  const totalWeight = textWords.reduce(
-    (sum, word) => sum + Math.max(1, word.replace(/[^\p{L}\p{N}]/gu, "").length),
-    0,
-  )
-  let cursor = start
-
-  return textWords.map((word, index) => {
-    const weight = Math.max(1, word.replace(/[^\p{L}\p{N}]/gu, "").length)
-    const isLast = index === textWords.length - 1
-    const wordEnd = isLast ? end : cursor + (duration * weight) / totalWeight
-    const result = {
-      start: cursor,
-      end: Math.max(cursor + 0.05, wordEnd),
-      text: word,
-    }
-    cursor = result.end
-    return result
-  })
+  const next = [...words.slice(0, first), ...changed, ...words.slice(last)]
+  return timeInsertedWords(next, segment.start, segment.end)
 }
 
 export function normalizeSegments(
