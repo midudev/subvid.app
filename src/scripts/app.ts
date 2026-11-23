@@ -1,24 +1,15 @@
 import { hasBuiltInTranslationSupport } from "@/scripts/builtInSupport.ts";
-import { cutRangesFromSegments } from "@/scripts/cuts.ts";
 import { createDownloadsController } from "@/scripts/downloads.ts";
-import type {
-  AppState,
-  Editor,
-  Segment,
-  TrackRole,
-  VisibleTrack,
-} from "@/scripts/editor.ts";
-import type { createVideoExporter } from "@/scripts/export/videoExport.ts";
-import { createExportModal } from "@/scripts/export/exportModal.ts";
-import { baseFileName, prettifyBytes } from "@/scripts/file.ts";
-import { I18N, langName, tt } from "@/scripts/i18n.ts";
+import { prettifyBytes } from "@/scripts/file.ts";
+import { tt } from "@/scripts/i18n.ts";
+import type { AppSession } from "@/scripts/session.ts";
 import { createStageManager } from "@/scripts/stageManager.ts";
-import { createConfigStageController } from "@/scripts/stages/configStage.ts";
-import { createSubtitlePreview } from "@/scripts/stages/subtitlePreview.ts";
 import { createUploadStageController } from "@/scripts/stages/uploadStage.ts";
-import { createTransformersClient } from "@/scripts/transformersClient.ts";
-import type { createTranslationService } from "@/scripts/translation.ts";
 import { ui } from "@/scripts/ui.ts";
+
+// Keep the ASR model ID inline here so the landing bundle doesn't pull in
+// languages.ts (all language tables & preview samples) on first paint.
+const ASR_MODEL_ID = "Xenova/whisper-base";
 
 const {
   downloads,
@@ -35,318 +26,132 @@ const {
   hasBuiltInTranslationSupport,
 });
 
-// ── State ──
-let selectedVideoFile: File | null = null
-let videoObjectUrl = ""
-let exporting = false
-// 16 kHz mono audio of the current video, drawn as the timeline waveform.
-let waveformAudio: Float32Array | null = null
-const state: AppState = {
-  detectedLang: "",
-  baseSegments: [],
-  segmentsByLang: {},
-  orderedLangs: [],
-  activeLang: "",
-  dualTrackMode: false,
-  dualTrackLangs: [],
-  trackStates: {},
-}
-
+let videoObjectUrl = "";
+let selectedFilePending: File | null = null;
 const { setStage } = createStageManager({ ui });
-const asrTracker = makeTransformersTracker("asr");
-const translationTracker = makeTransformersTracker("translation");
-const transformersClient = createTransformersClient({
-  onProgress(key, payload) {
-    if (key === "asr") asrTracker(payload);
-    else if (key === "translation") translationTracker(payload);
-  },
-});
 
-// ── Lazily loaded chunks ──
-// The landing page only needs the upload and config stages. The editor and
-// the translation service load once the user starts picking a file, and the
-// video exporter once there are subtitles to export.
-let editor: Editor | null = null;
-let editorLoading: Promise<Editor> | null = null;
-function loadEditor() {
-  editorLoading ??= import("@/scripts/editor.ts")
-    .then(({ createEditor }) => {
-      editor = createEditor({
+// Config, audio extraction, transcription, editor and export live in a lazy
+// chunk loaded on first intent (hover/focus/drag/sample) or when cached models
+// are detected on idle.
+let session: AppSession | null = null;
+let sessionLoading: Promise<AppSession> | null = null;
+function loadSession() {
+  sessionLoading ??= import("@/scripts/session.ts")
+    .then(({ createAppSession }) => {
+      session = createAppSession({
         ui,
-        tt,
-        I18N,
-        langName,
-        state,
-        currentSegments,
-        visibleTracks,
-        trackRole,
-        trackState,
-        translateSegments,
-        isTranslationReady,
-        cutRanges,
-        selectedVideoFile: () => selectedVideoFile,
-        isExporting: () => exporting,
         setStage,
-        onExportsEnabled: warmVideoExporter,
-      });
-      if (waveformAudio) editor.setWaveformAudio(waveformAudio);
-      return editor;
-    })
-    .catch((error) => {
-      editorLoading = null;
-      throw error;
-    });
-  return editorLoading;
-}
-
-// The dithered "reading" effect over the config preview. It only observes the
-// progress UI, so it can be created any time after a file is picked.
-let previewReaderLoading: Promise<void> | null = null;
-function loadPreviewReader() {
-  previewReaderLoading ??= import("@/scripts/previewReader.ts")
-    .then(({ createPreviewReader }) => {
-      createPreviewReader({
-        stage: ui.stageConfig,
-        preview: ui.configPreview,
-        video: ui.configVideo,
-        progress: ui.configProgress,
-        track: ui.configProgressTrack,
-        fill: ui.configProgressFill,
-      });
-    })
-    .catch(() => {
-      previewReaderLoading = null;
-    });
-  return previewReaderLoading;
-}
-
-type TranslationService = ReturnType<typeof createTranslationService>;
-let translationService: TranslationService | null = null;
-let translationLoading: Promise<TranslationService> | null = null;
-function loadTranslationService() {
-  translationLoading ??= import("@/scripts/translation.ts")
-    .then(({ createTranslationService }) => {
-      translationService = createTranslationService({
         downloads,
         renderDownloads,
         updateDownloadStatus,
-        transformersClient,
-        tt,
-        langName,
-        setStatus: configStageController.setStatus,
+        makeTransformersTracker,
+        fetchWithProgress,
       });
-      return translationService;
+      if (selectedFilePending) {
+        session.setSelectedVideoFile(selectedFilePending);
+        selectedFilePending = null;
+      }
+      return session;
     })
     .catch((error) => {
-      translationLoading = null;
+      sessionLoading = null;
       throw error;
     });
-  return translationLoading;
+  return sessionLoading;
 }
 
-const translateSegments = async (
-  segments: Segment[],
-  sourceLang: string,
-  targetLang: string,
-) =>
-  (await loadTranslationService()).translateSegments(
-    segments,
-    sourceLang,
-    targetLang,
+async function hasCachedAsrModel() {
+  if (typeof caches === "undefined") return false;
+  try {
+    const keys = await caches.keys();
+    for (const key of keys.filter((k) => /transformers/i.test(k))) {
+      const requests = await (await caches.open(key)).keys();
+      if (requests.some((request) => request.url.includes(ASR_MODEL_ID)))
+        return true;
+    }
+  } catch (error) {
+    console.warn("[preload] cache lookup failed", error);
+  }
+  return false;
+}
+
+let preloadStarted = false;
+function startPreload() {
+  if (preloadStarted) return;
+  preloadStarted = true;
+  void loadSession().then((s) => s.preloadAssetsInBackground());
+}
+
+function schedulePreload() {
+  const intentEvents = ["pointerenter", "focusin", "touchstart"];
+  const onIntent = () => {
+    intentEvents.forEach((type) =>
+      ui.dropzone.removeEventListener(type, onIntent),
+    );
+    window.removeEventListener("dragenter", onIntent);
+    startPreload();
+  };
+  intentEvents.forEach((type) =>
+    ui.dropzone.addEventListener(type, onIntent, { passive: true }),
   );
-
-const isTranslationReady = () => !!translationService?.isTranslationReady();
-
-type VideoExporter = ReturnType<typeof createVideoExporter>;
-let videoExporter: Promise<VideoExporter> | null = null;
-function loadVideoExporter() {
-  videoExporter ??= import("@/scripts/export/videoExport.ts")
-    .then(({ createVideoExporter }) =>
-      createVideoExporter(videoExporterOptions()),
-    )
-    .catch((error) => {
-      videoExporter = null;
-      throw error;
-    });
-  return videoExporter;
+  window.addEventListener("dragenter", onIntent);
+  void hasCachedAsrModel().then((cached) => {
+    if (!cached) return;
+    if ("requestIdleCallback" in window) requestIdleCallback(onIntent);
+    else setTimeout(onIntent, 200);
+  });
 }
-// Warm the exporter up as soon as there's something to export.
-function warmVideoExporter(on: boolean) {
-  if (on) loadVideoExporter().catch(() => {});
-}
-async function downloadVideo() {
-  const exporter = await loadVideoExporter();
-  await exporter.downloadVideo();
-}
-
-// ── Tracks ──
-function currentSegments(): Segment[] {
-  return state.segmentsByLang[state.activeLang] || [];
-}
-
-// Only words explicitly marked as cut remove media from the video.
-function cutRanges() {
-  return cutRangesFromSegments(state.segmentsByLang[state.detectedLang]);
-}
-
-function trackLabel(lang: string) {
-  if (state.dualTrackMode && lang === state.detectedLang)
-    return tt("tracks.transcription", { lang: langName(lang) });
-  if (state.dualTrackMode && state.dualTrackLangs.includes(lang))
-    return tt("tracks.subtitles", { lang: langName(lang) });
-  return langName(lang);
-}
-
-function trackRole(lang: string): TrackRole {
-  if (state.dualTrackMode && lang === state.detectedLang) return "transcription";
-  if (state.dualTrackMode && state.dualTrackLangs.includes(lang))
-    return "subtitles";
-  return "default";
-}
-
-function visibleTrackLangs() {
-  const langs =
-    state.dualTrackMode && state.dualTrackLangs.includes(state.activeLang)
-      ? state.dualTrackLangs
-      : [state.activeLang];
-  return langs.filter((lang, index) => lang && langs.indexOf(lang) === index);
-}
-
-function trackState(lang: string) {
-  return state.trackStates[lang] || {};
-}
-
-function visibleTracks(): VisibleTrack[] {
-  return visibleTrackLangs()
-    .map((lang) => ({
-      lang,
-      label: trackLabel(lang),
-      role: trackRole(lang),
-      segments: state.segmentsByLang[lang] || [],
-      hidden: !!trackState(lang).hidden,
-      locked: !!trackState(lang).locked,
-    }))
-    .filter((track) => track.segments.length);
-}
-
-function currentVideoSegments(): any[] {
-  const tracks = visibleTracks().filter((track) => !track.hidden);
-  return tracks.length ? tracks : [];
-}
-
-function resetEditorState() {
-  state.detectedLang = "";
-  state.baseSegments = [];
-  state.segmentsByLang = {};
-  state.orderedLangs = [];
-  state.activeLang = "";
-  state.dualTrackMode = false;
-  state.dualTrackLangs = [];
-  state.trackStates = {};
-  waveformAudio = null;
-  editor?.setWaveformAudio(null);
-}
-
-// Until the editor chunk is loaded there's nothing on screen to update: it
-// renders the current state when it's created.
-function enableExports(on: boolean) {
-  editor?.enableExports(on);
-}
-
-const exportModal = createExportModal({ ui, tt, isExporting: () => exporting });
-const { closeExportModal } = exportModal;
-
-const subtitlePreview = createSubtitlePreview({ ui });
-
-const configStageController = createConfigStageController({
-  ui,
-  tt,
-  downloads,
-  fetchWithProgress,
-  updateDownloadStatus,
-  transformersClient,
-  translateSegments,
-  selectedVideoFile: () => selectedVideoFile,
-  isExporting: () => exporting,
-  setGeneratedState: (generated) => {
-    Object.assign(state, generated, { trackStates: {} });
-    editor?.enableWordAnimationForAll();
-    editor?.syncActiveCaptionStyle();
-  },
-  setWaveformAudio: (audio) => {
-    waveformAudio = audio;
-    editor?.setWaveformAudio(audio);
-  },
-  renderTabs: () => editor?.renderTabs(),
-  renderSegments: () => editor?.renderSegments(),
-  enableExports,
-  resetHistory: () => editor?.resetHistory(),
-  updateCaption: () => editor?.updateCaption(),
-  setStage,
-  prepareEditor: loadEditor,
-  onTranscriptPreview: subtitlePreview.setTranscript,
-});
 
 const uploadStageController = createUploadStageController({
   ui,
   tt,
   setStage,
-  setStatus: configStageController.setStatus,
-  setProgress: configStageController.setProgress,
-  isExporting: () => exporting,
+  setStatus: (message, kind = "ok") => {
+    if (session) session.setStatus(message, kind);
+    else {
+      ui.configStatus.textContent = message;
+      ui.configStatus.dataset.kind = kind;
+    }
+  },
+  setProgress: (percent) => {
+    if (session) session.setProgress(percent);
+    else {
+      ui.configProgressFill.style.transform = `scaleX(${Math.max(0, Math.min(100, percent)) / 100})`;
+      ui.configProgressPct.textContent = `${Math.round(percent)}%`;
+    }
+  },
+  isExporting: () => session?.isExporting() ?? false,
   getVideoObjectUrl: () => videoObjectUrl,
   setVideoObjectUrl: (url) => {
     videoObjectUrl = url;
   },
   setSelectedVideoFile: (file) => {
-    selectedVideoFile = file;
+    if (session) session.setSelectedVideoFile(file);
+    else selectedFilePending = file;
   },
-  resetEditorState,
-  setLangAddStatus: (...args) => editor?.setLangAddStatus(...args),
-  populateAddLang: () => editor?.populateAddLang(),
-  renderSegments: () => editor?.renderSegments(),
-  enableExports,
-  resetHistory: () => editor?.resetHistory(),
+  resetEditorState: () => session?.resetEditorState(),
+  setLangAddStatus: (...args) => session?.setLangAddStatus(...args),
+  populateAddLang: () => session?.populateAddLang(),
+  renderSegments: () => session?.renderSegments(),
+  enableExports: (on) => session?.enableExports(on),
+  resetHistory: () => session?.resetHistory(),
   startEarlyTranscription: (file) => {
-    void loadPreviewReader();
-    configStageController.startEarlyTranscription(file);
+    void loadSession().then((s) => s.startEarlyTranscription(file));
   },
-  resetTranscriptionCache: () =>
-    configStageController.resetTranscriptionCache(),
-  generate: () => void configStageController.generate(),
-});
-
-const videoExporterOptions = (): Parameters<typeof createVideoExporter>[0] => ({
-  ui,
-  tt,
-  currentSegments: currentVideoSegments,
-  cutRanges,
-  selectedVideoFile: () => selectedVideoFile,
-  activeLang: () => state.activeLang,
-  baseFileName: () => baseFileName(selectedVideoFile),
-  isExporting: () => exporting,
-  setExporting: (value) => {
-    exporting = value;
+  resetTranscriptionCache: () => session?.resetTranscriptionCache(),
+  generate: () => {
+    void loadSession().then((s) => s.generate());
   },
-  enableExports,
-  setStatus: configStageController.setStatus,
-  modal: exportModal,
-  remuxAudioToAacLc: configStageController.remuxAudioToAacLc,
+  onSampleIntent: () => {
+    void loadSession();
+  },
 });
 
 // ── Init ──
 renderDownloads();
-configStageController.schedulePreload();
+schedulePreload();
 setStage("upload");
 uploadStageController.wireUploadStage();
-configStageController.wireConfigStage();
-subtitlePreview.wire();
-ui.downloadVideoBtn.addEventListener("click", downloadVideo);
-ui.exportClose.addEventListener("click", closeExportModal);
-ui.exportBackdrop.addEventListener("click", closeExportModal);
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !ui.exportModal.hidden) closeExportModal();
-});
 ui.downloadsToggle.addEventListener("click", () => {
   const opening = ui.downloadsPanel.hidden;
   ui.downloadsPanel.hidden = !opening;

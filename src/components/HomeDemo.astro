@@ -22,6 +22,20 @@ const bars = Array.from({ length: BARS }, (_, index) => {
   const syllable = 0.5 + 0.5 * Math.abs(Math.sin(time * 9 + noise(index) * 2))
   return Math.max(0.14, envelope * syllable * (0.55 + noise(index + 7) * 0.45))
 })
+
+// Single SVG path replaces 176 individual <span> bar nodes (88 × 2).
+const BAR_STEP = 10
+const BAR_WIDTH = 6
+const WAVE_H = 100
+const WAVE_W = BARS * BAR_STEP - (BAR_STEP - BAR_WIDTH)
+const wavePath = bars
+  .map((height, index) => {
+    const h = Math.max(7, Number((height * WAVE_H).toFixed(1)))
+    const y = Number(((WAVE_H - h) / 2).toFixed(1))
+    const x = index * BAR_STEP
+    return `M${x} ${y}h${BAR_WIDTH}v${h}h-${BAR_WIDTH}Z`
+  })
+  .join("")
 ---
 
 <figure
@@ -86,15 +100,15 @@ const bars = Array.from({ length: BARS }, (_, index) => {
       }
     </div>
     <div class="demo-wave">
-      {
-        [false, true].map((lit) => (
-          <div class:list={["demo-bars", { "demo-bars--lit": lit }]}>
-            {bars.map((height) => (
-              <span style={`height:${(height * 100).toFixed(1)}%`} />
-            ))}
-          </div>
-        ))
-      }
+      <svg
+        class="demo-bars"
+        viewBox={`0 0 ${WAVE_W} ${WAVE_H}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <path class="demo-bars-base" d={wavePath} />
+        <path class="demo-bars--lit" d={wavePath} />
+      </svg>
     </div>
     <div class="demo-lane"><span class="demo-playhead"></span></div>
   </div>

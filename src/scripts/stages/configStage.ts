@@ -119,6 +119,7 @@ export function createConfigStageController({
   let asrReadyPromise: Promise<void> | null = null
   let progressRaf = 0
   let progressIndeterminate = false
+  let lastProgressRounded = -1
   let activeFileKey = ""
   let audioJob: AudioJob | null = null
   let audioProgressJobKey: string | null = null
@@ -137,7 +138,10 @@ export function createConfigStageController({
   }
 
   function setIndeterminate(on: boolean) {
-    if (on) stopProgressCreep()
+    if (on) {
+      stopProgressCreep()
+      lastProgressRounded = -1
+    }
     progressIndeterminate = on
     ui.configProgressFill.classList.toggle("is-indeterminate", on)
     if (ui.configProgressTrack) {
@@ -151,9 +155,12 @@ export function createConfigStageController({
     if (progressIndeterminate) return
     const clamped = Math.max(0, Math.min(100, percent))
     const rounded = Math.round(clamped)
-    ui.configProgressFill.style.width = `${clamped}%`
-    ui.configProgressPct.textContent = `${rounded}%`
-    ui.configProgressTrack?.setAttribute("aria-valuenow", String(rounded))
+    ui.configProgressFill.style.transform = `scaleX(${clamped / 100})`
+    if (rounded !== lastProgressRounded) {
+      lastProgressRounded = rounded
+      ui.configProgressPct.textContent = `${rounded}%`
+      ui.configProgressTrack?.setAttribute("aria-valuenow", String(rounded))
+    }
   }
 
   function stopProgressCreep() {
@@ -784,6 +791,7 @@ export function createConfigStageController({
     startProgressCreep,
     stopProgressCreep,
     ensureRecognizer,
+    preloadAssetsInBackground,
     schedulePreload,
     startEarlyTranscription,
     resetTranscriptionCache,

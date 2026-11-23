@@ -332,13 +332,15 @@ export function createSubtitleStyleController({
   }
 
   // Captions render on every animation frame during playback, so these caches
-  // let each frame skip DOM writes when nothing visible has changed.
+  // let each frame skip DOM writes and layout reads when nothing changed.
   let layerBoundsKey = ""
+  let styleVersion = 1
+  const captionBoxMap = new Map<string, HTMLElement>()
   const captionTextCache = new WeakMap<
     HTMLElement,
     { key: string; words?: Array<{ start: number; text: string }> }
   >()
-  const captionStyleCache = new WeakMap<HTMLElement, string>()
+  const captionStyleVersion = new WeakMap<HTMLElement, number>()
 
   function syncCaptionLayerBounds() {
     const previewRect = ui.videoPreview.getBoundingClientRect()
@@ -501,6 +503,7 @@ export function createSubtitleStyleController({
   }
 
   function applyCaptionStyle() {
+    styleVersion += 1
     captionBoxes().forEach((box) => applyCaptionBoxStyle(box))
     stackCaptionBoxes()
   }
@@ -525,7 +528,7 @@ export function createSubtitleStyleController({
     applyCaptionStyle()
   }
 
-  function renderCaptionText(box: HTMLElement, track: any, time: number) {
+  function renderCaptionText(box: HTMLElement, track: any, time: number): boolean {
     const style = boxStyle(box)
     const cached = captionTextCache.get(box)
     box.classList.toggle("is-word-highlight", !!style.wordHighlight)
@@ -534,14 +537,17 @@ export function createSubtitleStyleController({
       if (cached?.key !== key) {
         box.textContent = track.text
         captionTextCache.set(box, { key })
+        return true
       }
-      return
+      return false
     }
 
     const { start, end } = track.segment
     const key = `words:${start}:${end}:${track.text}`
     let words = cached?.key === key ? cached.words : undefined
+    let layoutChanged = false
     if (!words) {
+      layoutChanged = true
       words = estimatedWordsForSegment(track.segment)
       if (words.length) {
         box.replaceChildren()
@@ -563,6 +569,7 @@ export function createSubtitleStyleController({
     words.forEach((word, index) => {
       spans[index]?.classList.toggle("is-spoken", time >= word.start)
     })
+    return layoutChanged
   }
 
   function applyCaptionBoxStyle(box: HTMLElement) {
@@ -592,7 +599,7 @@ export function createSubtitleStyleController({
             ? "translate(-50%, calc(-100% + var(--caption-stack, 0px)))"
             : "translate(-50%, calc(-50% + var(--caption-stack, 0px)))"
     }
-    captionStyleCache.set(box, JSON.stringify(c))
+    captionStyleVersion.set(box, styleVersion)
   }
 
   function captionCenterPercent(el: HTMLElement) {
@@ -895,16 +902,15 @@ export function createSubtitleStyleController({
   ) {
     // Layer bounds are kept in sync by the resize/metadata listeners.
     const wanted = new Set<string>()
+    let needsStack = false
 
     tracks.forEach((track) => {
       const role = track.role || "default"
       const key = `${role}:${track.lang}`
       wanted.add(key)
 
-      let box = ui.caption.querySelector(
-        `.caption-box[data-key="${CSS.escape(key)}"]`,
-      ) as HTMLElement | null
-      if (!box) {
+      let box = captionBoxMap.get(key) ?? null
+      if (!box || !box.isConnected) {
         box = document.createElement("div")
         box.className = `caption-box caption-box--${role}`
         box.dataset.key = key
@@ -913,23 +919,34 @@ export function createSubtitleStyleController({
         box.role = "button"
         box.tabIndex = 0
         ui.caption.appendChild(box)
+        captionBoxMap.set(key, box)
+        needsStack = true
       }
 
-      renderCaptionText(box, track, time)
+      if (renderCaptionText(box, track, time)) needsStack = true
       const hidden = !track.text.trim()
-      if (box.hidden !== hidden) box.hidden = hidden
+      if (box.hidden !== hidden) {
+        box.hidden = hidden
+        needsStack = true
+      }
       const label = `${track.label}. ${ui.caption.dataset.dragLabel || ""}`.trim()
       if (box.getAttribute("aria-label") !== label)
         box.setAttribute("aria-label", label)
-      if (captionStyleCache.get(box) !== JSON.stringify(boxStyle(box)))
+      if (captionStyleVersion.get(box) !== styleVersion) {
         applyCaptionBoxStyle(box)
+        needsStack = true
+      }
     })
 
-    captionBoxes().forEach((box) => {
-      if (!wanted.has(box.dataset.key || "")) box.remove()
-    })
-    stackCaptionBoxes()
-    styleTracks =tracks.map((track) => ({ role: track.role || "default", lang: track.lang }))
+    for (const [key, box] of captionBoxMap) {
+      if (!wanted.has(key)) {
+        box.remove()
+        captionBoxMap.delete(key)
+        needsStack = true
+      }
+    }
+    if (needsStack) stackCaptionBoxes()
+    styleTracks = tracks.map((track) => ({ role: track.role || "default", lang: track.lang }))
     renderTrackSwitch()
 
     const activeTrackVisible = tracks.some(

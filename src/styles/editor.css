@@ -249,10 +249,12 @@
 }
 .gen-fill {
   height: 100%;
-  width: 0%;
+  width: 100%;
   border-radius: 4px;
   background: var(--text);
-  transition: width 150ms linear;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 150ms linear;
 }
 /* Opaque steps (e.g. audio extraction) animate on the compositor so the bar
    never looks frozen while the main thread is busy. */

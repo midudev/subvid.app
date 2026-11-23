@@ -88,6 +88,39 @@ export function createTimelineController(options: TimelineOptions) {
   let phAnchorMedia = 0
   let phAnchorWall = 0
   let waveform: Waveform | null = null
+  let waveRaf = 0
+  let waveColor = ""
+  let lastClockText = ""
+
+  // Binary search for the segment containing `time` (segments are sorted by start).
+  // Falls back to scanning neighbors if overlapping segments exist.
+  function findSegmentIndexAt(
+    segments: any[],
+    time: number,
+    requireText = false,
+  ): number {
+    let lo = 0
+    let hi = segments.length - 1
+    let candidate = -1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (segments[mid].start <= time) {
+        candidate = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    for (let i = candidate; i >= 0; i--) {
+      const seg = segments[i]
+      if (time <= seg.end) {
+        if (!requireText || seg.text?.trim()) return i
+      } else if (candidate - i > 4) {
+        break
+      }
+    }
+    return -1
+  }
 
   function escapeHtml(value: string) {
     return String(value)
@@ -155,6 +188,21 @@ export function createTimelineController(options: TimelineOptions) {
     return Math.max(tlDuration, segEnd, 1)
   }
 
+  function renderRuler(dur: number) {
+    let step = 1
+    if (tlPxPerSec < 24) step = 15
+    else if (tlPxPerSec < 45) step = 10
+    else if (tlPxPerSec < 80) step = 5
+    else if (tlPxPerSec < 140) step = 2
+    else step = 1
+    let ruler = ""
+    for (let t = 0; t <= dur + 0.001; t += step) {
+      const left = t * tlPxPerSec
+      ruler += `<span class="tl-tick" style="left:${left}px"><i></i><b>${formatClock(t)}</b></span>`
+    }
+    ui.timelineRuler.innerHTML = ruler
+  }
+
   function renderTimeline() {
     if (!ui.timelineBlocks) return
     const tracks = getTracks()
@@ -169,20 +217,9 @@ export function createTimelineController(options: TimelineOptions) {
     ui.timelineScroll.style.height = `${headerHeight + blocksHeight + TL_SCROLL_PAD}px`
     ui.timeline?.classList.toggle("has-wave", !!waveform)
 
-    let step = 1
-    if (tlPxPerSec < 24) step = 15
-    else if (tlPxPerSec < 45) step = 10
-    else if (tlPxPerSec < 80) step = 5
-    else if (tlPxPerSec < 140) step = 2
-    else step = 1
-    let ruler = ""
-    for (let t = 0; t <= dur + 0.001; t += step) {
-      const left = t * tlPxPerSec
-      ruler += `<span class="tl-tick" style="left:${left}px"><i></i><b>${formatClock(t)}</b></span>`
-    }
-    ui.timelineRuler.innerHTML = ruler
+    renderRuler(dur)
 
-    ui.timelineBlocks.innerHTML = ""
+    const fragment = document.createDocumentFragment()
     tracks.forEach((track, trackIndex) => {
       const row = document.createElement("div")
       row.className = "tl-track-row"
@@ -221,10 +258,33 @@ export function createTimelineController(options: TimelineOptions) {
     `
         row.appendChild(block)
       })
-      ui.timelineBlocks.appendChild(row)
+      fragment.appendChild(row)
     })
+    ui.timelineBlocks.replaceChildren(fragment)
     renderCuts()
     drawWaveform()
+    updateTimelinePlayhead()
+  }
+
+  function updateTimelineZoom() {
+    if (!ui.timelineBlocks) return
+    const tracks = getTracks()
+    const dur = tlTotalDuration()
+    ui.timelineTrack.style.width = `${dur * tlPxPerSec}px`
+    renderRuler(dur)
+
+    const segmentsByLang = new Map(tracks.map((track) => [track.lang, track.segments]))
+    const blocks = ui.timelineBlocks.querySelectorAll<HTMLElement>(".tl-block")
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i]
+      const seg = segmentsByLang.get(block.dataset.lang || "")?.[Number(block.dataset.index)]
+      if (!seg) continue
+      block.style.left = `${seg.start * tlPxPerSec}px`
+      block.style.width = `${Math.max(TL_MIN_DUR, seg.end - seg.start) * tlPxPerSec}px`
+    }
+
+    renderCuts()
+    scheduleDrawWaveform()
     updateTimelinePlayhead()
   }
 
@@ -262,7 +322,8 @@ export function createTimelineController(options: TimelineOptions) {
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, width, TL_WAVE_H)
-    ctx.fillStyle = getComputedStyle(canvas).color
+    if (!waveColor) waveColor = getComputedStyle(canvas).color
+    ctx.fillStyle = waveColor
 
     const ranges = cutRanges()
     const mid = TL_WAVE_H / 2
@@ -277,6 +338,14 @@ export function createTimelineController(options: TimelineOptions) {
       ctx.fillRect(x, mid - height, TL_WAVE_BAR, height * 2)
     }
     ctx.globalAlpha = 1
+  }
+
+  function scheduleDrawWaveform() {
+    if (waveRaf) return
+    waveRaf = requestAnimationFrame(() => {
+      waveRaf = 0
+      drawWaveform()
+    })
   }
 
   function setWaveform(next: Waveform | null) {
@@ -301,7 +370,7 @@ export function createTimelineController(options: TimelineOptions) {
     }
 
     tlPxPerSec = nextPxPerSec
-    renderTimeline()
+    updateTimelineZoom()
 
     if (view && anchorTime !== null) {
       view.scrollLeft = Math.max(0, anchorTime * tlPxPerSec - anchorOffset)
@@ -330,8 +399,13 @@ export function createTimelineController(options: TimelineOptions) {
     const t = timeOverride ?? ui.video.currentTime ?? 0
     const x = t * tlPxPerSec
     ui.timelinePlayhead.style.transform = `translate3d(${x}px,0,0)`
-    if (ui.tlClock)
-      ui.tlClock.textContent = `${formatClock(t)} / ${formatClock(tlTotalDuration())}`
+    if (ui.tlClock) {
+      const nextClock = `${formatClock(t)} / ${formatClock(tlTotalDuration())}`
+      if (nextClock !== lastClockText) {
+        lastClockText = nextClock
+        ui.tlClock.textContent = nextClock
+      }
+    }
     if (!ui.video.paused && ui.timelineScroll) {
       const view = ui.timelineScroll
       if (
@@ -588,9 +662,8 @@ export function createTimelineController(options: TimelineOptions) {
     const captionTracks = tracks
       .filter((track) => !track.hidden)
       .map((track) => {
-        const segment = track.segments.find(
-          (s) => current >= s.start && current <= s.end && s.text?.trim(),
-        )
+        const segIdx = findSegmentIndexAt(track.segments, current, true)
+        const segment = segIdx >= 0 ? track.segments[segIdx] : undefined
         return {
           lang: track.lang,
           label: track.label,
@@ -602,9 +675,7 @@ export function createTimelineController(options: TimelineOptions) {
       .filter((track) => track.text.trim())
     const activeTrack =
       tracks.find((track) => track.lang === activeLang) || tracks[0]
-    const idx = activeTrack.segments.findIndex(
-      (s) => current >= s.start && current <= s.end,
-    )
+    const idx = findSegmentIndexAt(activeTrack.segments, current)
     renderCaptions?.(captionTracks, current)
     if (!frameOnly) {
       highlightSegment(idx, {
@@ -756,9 +827,15 @@ export function createTimelineController(options: TimelineOptions) {
     ui.timelineScroll?.addEventListener("wheel", handleTimelineWheelZoom, {
       passive: false,
     })
-    ui.timelineScroll?.addEventListener("scroll", drawWaveform, { passive: true })
+    ui.timelineScroll?.addEventListener("scroll", scheduleDrawWaveform, {
+      passive: true,
+    })
     if (ui.timelineScroll && "ResizeObserver" in window)
-      new ResizeObserver(() => drawWaveform()).observe(ui.timelineScroll)
+      new ResizeObserver(() => scheduleDrawWaveform()).observe(ui.timelineScroll)
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      waveColor = ""
+      scheduleDrawWaveform()
+    })
     ui.tlZoomIn?.addEventListener("click", () => zoomTimeline(1.4))
     ui.tlZoomOut?.addEventListener("click", () => zoomTimeline(1 / 1.4))
     ui.video.addEventListener("loadedmetadata", () => {

@@ -2,12 +2,15 @@
 // demo and the "reading" effect over the video while subtitles are generated.
 
 // 8×8 Bayer matrix, normalized to thresholds in (0, 1).
-export const BAYER = [
-  0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14,
-  46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19,
-  59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29,
-  53, 21,
-].map((value) => (value + 0.5) / 64)
+export const BAYER = Float32Array.from(
+  [
+    0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14,
+    46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19,
+    59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29,
+    53, 21,
+  ],
+  (value) => (value + 0.5) / 64,
+)
 
 // Night blues for shadows, warm tones for skin and lamps, a cool highlight.
 const PALETTE = [
@@ -21,6 +24,7 @@ const PALETTE = [
 ]
 // How far each Bayer threshold nudges a color before it snaps to the palette.
 const SPREAD = 0.22
+const BAYER_OFFSET = Float32Array.from(BAYER, (value) => (value - 0.5) * SPREAD)
 
 const LUT_BITS = 5
 const LUT_SIZE = 1 << LUT_BITS
@@ -60,8 +64,9 @@ const NEAREST = (() => {
   return table
 })()
 
-const toCell = (value: number) =>
-  Math.min(LUT_SIZE - 1, Math.max(0, Math.round(value * (LUT_SIZE - 1))))
+const LUT_MAX = LUT_SIZE - 1
+const LUT_SHIFT_R = LUT_BITS * 2
+const INV_4G = 1 / 4294967296
 
 export type DitherOptions = {
   // Linear exposure applied before dithering, so dark footage has room to work.
@@ -85,30 +90,44 @@ export function ditherInto(
   // xorshift32, seeded per call: the grain runs for every pixel of every
   // frame and only has to look random, at about half the cost of Math.random.
   let noise = (Math.random() * 4294967296) | 1
+  const gainScale = (gain / 255) * LUT_MAX
+  const liftScaled = lift * LUT_MAX
+  const grainScale = grain * LUT_MAX
+  const fullReveal = reveal >= 1
+  const hasGrain = grain > 0
+
   for (let y = 0; y < height; y++) {
     const row = y * width
+    const bayerRow = (y & 7) << 3
+    const revealRow = ((y >> 2) & 7) << 3
     for (let x = 0; x < width; x++) {
       const i = row + x
-      if (source[i * 4 + 3] < 128) {
+      const p = i << 2
+      if (source[p + 3] < 128) {
         target[i] = 0
         continue
       }
-      if (BAYER[((y >> 2) & 7) * 8 + ((x >> 2) & 7)] > reveal) {
+      if (!fullReveal && BAYER[revealRow + ((x >> 2) & 7)] > reveal) {
         target[i] = INK
         continue
       }
-      let offset = (BAYER[(y & 7) * 8 + (x & 7)] - 0.5) * SPREAD
-      if (grain > 0) {
+      let offset = BAYER_OFFSET[bayerRow + (x & 7)] * LUT_MAX + liftScaled
+      if (hasGrain) {
         noise ^= noise << 13
         noise ^= noise >>> 17
         noise ^= noise << 5
-        offset += ((noise >>> 0) / 4294967296 - 0.5) * grain
+        offset += ((noise >>> 0) * INV_4G - 0.5) * grainScale
       }
-      const r = (source[i * 4] / 255) * gain + lift + offset
-      const g = (source[i * 4 + 1] / 255) * gain + lift + offset
-      const b = (source[i * 4 + 2] / 255) * gain + lift + offset
-      target[i] =
-        WORDS[NEAREST[(toCell(r) << (LUT_BITS * 2)) | (toCell(g) << LUT_BITS) | toCell(b)]]
+      let r = Math.round(source[p] * gainScale + offset)
+      if (r < 0) r = 0
+      else if (r > LUT_MAX) r = LUT_MAX
+      let g = Math.round(source[p + 1] * gainScale + offset)
+      if (g < 0) g = 0
+      else if (g > LUT_MAX) g = LUT_MAX
+      let b = Math.round(source[p + 2] * gainScale + offset)
+      if (b < 0) b = 0
+      else if (b > LUT_MAX) b = LUT_MAX
+      target[i] = WORDS[NEAREST[(r << LUT_SHIFT_R) | (g << LUT_BITS) | b]]
     }
   }
 }

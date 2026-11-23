@@ -28,9 +28,12 @@ const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
 const progress = ([start, end]: Range, t: number) =>
   clamp01((t - start) / (end - start))
 
+const PHASE_ENTRIES = Object.entries(DEMO_PHASES) as Array<[Phase, Range]>
+
 function phaseAt(t: number): Phase {
-  for (const [name, [start, end]] of Object.entries(DEMO_PHASES)) {
-    if (t >= start && t < end) return name as Phase
+  for (let i = 0; i < PHASE_ENTRIES.length; i++) {
+    const [name, [start, end]] = PHASE_ENTRIES[i]
+    if (t >= start && t < end) return name
   }
   return "export"
 }
@@ -49,7 +52,7 @@ export function initHomeDemo(root: HTMLElement) {
   const timecode = root.querySelector<HTMLElement>(".demo-time-value")
   const lane = root.querySelector<HTMLElement>(".demo-lane")
   const playheadEl = root.querySelector<HTMLElement>(".demo-playhead")
-  const litBars = root.querySelector<HTMLElement>(".demo-bars--lit")
+  const litBars = root.querySelector<SVGElement | HTMLElement>(".demo-bars--lit")
   if (!screen || !canvas || !statusText || !timecode) return
   // Narrowed copies: the per-frame callback below can't see the guard above.
   const statusEl: HTMLElement = statusText
@@ -234,6 +237,20 @@ export function initHomeDemo(root: HTMLElement) {
     visible = entry.isIntersecting
     sync()
   }).observe(root)
+
+  const uploadStage = root.closest<HTMLElement>("#stage-upload")
+  if (uploadStage) {
+    new MutationObserver(() => {
+      if (uploadStage.hidden) {
+        scene.suspend()
+      } else {
+        scene.resume()
+        sceneKey = ""
+        if (reduceMotion.matches) update(STILL_TIME, true)
+        else update(Math.max(0, clock))
+      }
+    }).observe(uploadStage, { attributes: true, attributeFilter: ["hidden"] })
+  }
 
   document.addEventListener("visibilitychange", sync)
   reduceMotion.addEventListener("change", sync)

@@ -170,9 +170,59 @@ export function createDownloadsController({
     })
   }
 
+  type DownloadRowRefs = {
+    li: HTMLLIElement
+    icon: HTMLSpanElement
+    pct: HTMLSpanElement
+    track: HTMLDivElement
+    fill: HTMLDivElement
+    foot: HTMLSpanElement
+    lastState: string
+    lastPct: string
+    lastFoot: string
+    lastIndeterminate: boolean
+  }
+  const downloadRows = new Map<string, DownloadRowRefs>()
+
+  function ensureDownloadRow(key: string, label: string): DownloadRowRefs {
+    const existing = downloadRows.get(key)
+    if (existing) return existing
+    const li = document.createElement("li")
+    li.className = "item item-pending"
+    li.innerHTML = `
+      <span class="item-icon">${downloadIcon("pending")}</span>
+      <div class="item-body">
+        <div class="item-head">
+          <strong></strong>
+          <span class="item-pct" hidden></span>
+        </div>
+        <div class="dl-track" hidden>
+          <div class="dl-fill"></div>
+        </div>
+        <span class="item-foot" hidden></span>
+      </div>`
+    const strong = li.querySelector("strong")!
+    strong.textContent = label
+    const refs: DownloadRowRefs = {
+      li,
+      icon: li.querySelector(".item-icon") as HTMLSpanElement,
+      pct: li.querySelector(".item-pct") as HTMLSpanElement,
+      track: li.querySelector(".dl-track") as HTMLDivElement,
+      fill: li.querySelector(".dl-fill") as HTMLDivElement,
+      foot: li.querySelector(".item-foot") as HTMLSpanElement,
+      lastState: "pending",
+      lastPct: "",
+      lastFoot: "",
+      lastIndeterminate: false,
+    }
+    ui.downloadsList.appendChild(li)
+    downloadRows.set(key, refs)
+    return refs
+  }
+
   function renderDownloadsList() {
-    ui.downloadsList.innerHTML = ""
-    Object.values(downloads).forEach((item: any) => {
+    Object.entries(downloads).forEach(([key, item]: [string, any]) => {
+      const refs = ensureDownloadRow(key, item.label)
       const pct = item.state === "ready" ? 100 : Math.round(item.progress)
       const sizeInfo =
         item.state === "ready" && item.total
@@ -194,29 +244,34 @@ export function createDownloadsController({
             : item.state === "error"
               ? STATE_LABEL.error
               : meta
-      const li = document.createElement("li")
-      li.className = `item item-${item.state}`
-      li.innerHTML = `
-      <span class="item-icon">${downloadIcon(item.state)}</span>
-      <div class="item-body">
-        <div class="item-head">
-          <strong>${item.label}</strong>
-          ${
-            item.state === "downloading"
-              ? `<span class="item-pct">${pct}%</span>`
-              : ""
-          }
-        </div>
-        ${
-          showTrack
-            ? `<div class="dl-track${!item.total ? " is-indeterminate" : ""}">
-                <div class="dl-fill" style="width:${pct}%"></div>
-              </div>`
-            : ""
+
+      if (refs.lastState !== item.state) {
+        refs.lastState = item.state
+        refs.li.className = `item item-${item.state}`
+        refs.icon.innerHTML = downloadIcon(item.state)
+      }
+      refs.pct.hidden = !showTrack
+      if (showTrack) {
+        const pctText = `${pct}%`
+        if (refs.lastPct !== pctText) {
+          refs.lastPct = pctText
+          refs.pct.textContent = pctText
         }
-        ${footText ? `<span class="item-foot">${footText}</span>` : ""}
-      </div>`
-      ui.downloadsList.appendChild(li)
+      }
+      refs.track.hidden = !showTrack
+      if (showTrack) {
+        const indeterminate = !item.total
+        if (refs.lastIndeterminate !== indeterminate) {
+          refs.lastIndeterminate = indeterminate
+          refs.track.classList.toggle("is-indeterminate", indeterminate)
+        }
+        refs.fill.style.transform = `scaleX(${pct / 100})`
+      }
+      refs.foot.hidden = !footText
+      if (refs.lastFoot !== footText) {
+        refs.lastFoot = footText
+        refs.foot.textContent = footText
+      }
     })
   }
 
@@ -249,7 +304,7 @@ export function createDownloadsController({
     )
     ui.downloadsPct.textContent = `${Math.round(overall)}%`
 
-    ui.downloadsOverall.style.width = `${overall}%`
+    ui.downloadsOverall.style.transform = `scaleX(${overall / 100})`
     ui.downloadsPanel.classList.toggle("is-ready", allReady)
     ui.downloadsPanel.classList.toggle("is-error", hasError)
     ui.downloadsToggle.classList.toggle("is-ready", allReady)
@@ -295,12 +350,15 @@ export function createDownloadsController({
       for (const key of targets) {
         const cache = await caches.open(key)
         const requests = await cache.keys()
-        for (const req of requests) {
-          const res = await cache.match(req)
-          if (!res) continue
-          const len = Number(res.headers.get("content-length"))
-          total += len || (await res.clone().blob()).size
-        }
+        const sizes = await Promise.all(
+          requests.map(async (req) => {
+            const res = await cache.match(req)
+            if (!res) return 0
+            const len = Number(res.headers.get("content-length"))
+            return len || (await res.clone().blob()).size
+          }),
+        )
+        for (const size of sizes) total += size
       }
     } catch (e) {
       console.warn("[clear-models] size calc failed", e)

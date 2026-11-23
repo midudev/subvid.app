@@ -22,6 +22,7 @@ type UploadStageOptions = {
   startEarlyTranscription: (file: File) => void;
   resetTranscriptionCache: () => void;
   generate: () => void;
+  onSampleIntent?: () => void;
 };
 
 function isVideoFile(file: File) {
@@ -61,6 +62,7 @@ export function createUploadStageController({
   startEarlyTranscription,
   resetTranscriptionCache,
   generate,
+  onSampleIntent,
 }: UploadStageOptions) {
   let dragDepth = 0;
   let unsupportedTimer: number | undefined;
@@ -287,7 +289,10 @@ export function createUploadStageController({
     const buttons = $$<HTMLButtonElement>("[data-sample]", ui.stageUpload);
     for (const button of buttons) {
       const url = button.dataset.sample || "";
-      const warm = () => void loadSample(url).catch(() => {});
+      const warm = () => {
+        onSampleIntent?.();
+        void loadSample(url).catch(() => {});
+      };
       button.addEventListener("pointerenter", warm);
       button.addEventListener("focus", warm);
       button.addEventListener("click", async () => {

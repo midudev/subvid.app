@@ -19,6 +19,8 @@ export function createDitherScene(
   let sprite: HTMLImageElement | null = null
   let worker: Worker | null = null
   let renderer: Renderer | null = null
+  let suspended = false
+  let workerFailed = false
 
   // Main-thread fallback: replays whatever the scene has been told so far.
   function renderOnMainThread(target: HTMLCanvasElement) {
@@ -28,16 +30,21 @@ export function createDitherScene(
     if (state) renderer.render(state)
   }
 
+  function replaceCanvas() {
+    const fresh = canvas.cloneNode() as HTMLCanvasElement
+    canvas.replaceWith(fresh)
+    canvas = fresh
+    return fresh
+  }
+
   // A transferred canvas can't be drawn from this thread anymore: swap in a
   // fresh one if the worker dies.
   function abandonWorker() {
     if (!worker) return
+    workerFailed = true
     worker.terminate()
     worker = null
-    const fresh = canvas.cloneNode() as HTMLCanvasElement
-    canvas.replaceWith(fresh)
-    canvas = fresh
-    renderOnMainThread(fresh)
+    renderOnMainThread(replaceCanvas())
   }
 
   const canUseWorker =
@@ -46,44 +53,80 @@ export function createDitherScene(
     typeof createImageBitmap === "function" &&
     "transferControlToOffscreen" in canvas
 
-  if (canUseWorker) {
+  function sendSpriteToWorker(targetWorker: Worker, source: HTMLImageElement) {
+    createImageBitmap(source)
+      .then((bitmap) => {
+        if (worker !== targetWorker) {
+          bitmap.close()
+          return
+        }
+        targetWorker.postMessage(
+          { type: "sprite", bitmap, width: bitmap.width, height: bitmap.height },
+          [bitmap],
+        )
+        if (state) targetWorker.postMessage({ type: "render", state })
+      })
+      .catch(() => {
+        if (worker === targetWorker) abandonWorker()
+      })
+  }
+
+  function startWorker() {
     try {
-      worker = new Worker(new URL("./ditherScene.worker.ts", import.meta.url), {
+      const next = new Worker(new URL("./ditherScene.worker.ts", import.meta.url), {
         type: "module",
       })
-      worker.onerror = abandonWorker
+      worker = next
+      next.onerror = abandonWorker
       const offscreen = canvas.transferControlToOffscreen()
-      worker.postMessage({ type: "init", canvas: offscreen }, [offscreen])
+      next.postMessage({ type: "init", canvas: offscreen }, [offscreen])
+      if (size) next.postMessage({ type: "resize", width: size[0], height: size[1] })
+      if (sprite) sendSpriteToWorker(next, sprite)
+      else if (state) next.postMessage({ type: "render", state })
     } catch {
       if (worker) abandonWorker()
-      else renderOnMainThread(canvas)
+      else {
+        workerFailed = true
+        renderOnMainThread(canvas)
+      }
     }
-  } else {
-    renderOnMainThread(canvas)
   }
+
+  if (canUseWorker) startWorker()
+  else renderOnMainThread(canvas)
 
   const source = new Image()
   source.decoding = "async"
   source.src = spriteUrl
   source
     .decode()
-    .then(async () => {
+    .then(() => {
       sprite = source
-      if (worker) {
-        try {
-          const bitmap = await createImageBitmap(source)
-          worker?.postMessage(
-            { type: "sprite", bitmap, width: bitmap.width, height: bitmap.height },
-            [bitmap],
-          )
-        } catch {
-          abandonWorker()
-        }
-      }
+      if (worker) sendSpriteToWorker(worker, source)
       renderer?.setSprite(source, source.naturalWidth, source.naturalHeight)
       onLoad()
     })
     .catch(() => {})
+
+  // Releases the worker thread and OffscreenCanvas buffers while the landing
+  // is hidden (e.g. while the user is in the config or editor stage).
+  function suspend() {
+    if (suspended || !worker) return
+    suspended = true
+    worker.terminate()
+    worker = null
+  }
+
+  function resume() {
+    if (!suspended) return
+    suspended = false
+    if (canUseWorker && !workerFailed) {
+      replaceCanvas()
+      startWorker()
+    } else if (!renderer) {
+      renderOnMainThread(canvas)
+    }
+  }
 
   // Picks a resolution so each dithered cell is about `cell` CSS pixels wide.
   function resize(cssWidth: number, cell: number) {
@@ -101,5 +144,5 @@ export function createDitherScene(
     renderer?.render(next)
   }
 
-  return { resize, render }
+  return { resize, render, suspend, resume }
 }

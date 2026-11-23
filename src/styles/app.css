@@ -353,9 +353,11 @@ input[type="range"] {
 }
 .panel-progress-fill {
   height: 100%;
-  width: 0%;
+  width: 100%;
   background: var(--text);
-  transition: width 300ms ease;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 300ms ease;
 }
 .status-panel.is-ready .panel-progress-fill {
   background: var(--success);
@@ -445,9 +447,11 @@ input[type="range"] {
 }
 .dl-fill {
   height: 100%;
-  width: 0%;
+  width: 100%;
   background: var(--text);
-  transition: width 250ms ease;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 250ms ease;
 }
 .dl-track.is-indeterminate .dl-fill {
   width: 35% !important;
@@ -900,22 +904,17 @@ input[type="range"] {
 .demo-bars {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  gap: clamp(1px, 0.25vw, 2px);
+  width: 100%;
+  height: 100%;
+  display: block;
 }
-.demo-bars span {
-  flex: 1;
-  min-height: 2px;
-  border-radius: 1px;
-  background: var(--border-strong);
+.demo-bars-base {
+  fill: var(--border-strong);
 }
 .demo-bars--lit {
   /* Opened from the left by homeDemo.ts as the scan advances. */
+  fill: var(--text-2);
   clip-path: inset(0 100% 0 0);
-}
-.demo-bars--lit span {
-  background: var(--text-2);
 }
 .demo-lane {
   grid-column: 2;
