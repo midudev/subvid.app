@@ -1,12 +1,14 @@
 // The transcript as a single editable document: one line per subtitle and one
 // span per word. Text edits preserve the media; with word editing on, deleting
 // words cuts them from the video. Translation tracks are plain text.
-import { keptParts, type TimeRange } from "@/scripts/cuts.ts"
+import { cutAt, keptParts, type TimeRange } from "@/scripts/cuts.ts"
 import {
   editTranslatedWords,
   estimatedWordsForSegment,
   splitWord,
+  subtitleSlotAt,
   timeInsertedWords,
+  wordsForDraggedBlock,
   wordsText,
   type SubtitleSegment,
   type SubtitleWord,
@@ -40,12 +42,17 @@ type Token = {
 
 type TranscriptEditorOptions = {
   root: HTMLElement
+  addButton: HTMLButtonElement
+  addStatus: HTMLElement
+  video: HTMLVideoElement
+  mediaDuration: () => number
   cutButton: HTMLButtonElement
   tt: (path: string, vars?: Record<string, unknown>) => string
   segmentsFor: (lang: string) => Segment[]
   activeLang: () => string
   /** The track whose words drive the cuts (the transcription). */
   sourceLang: () => string
+  trackLocked: () => boolean
   cutRanges: () => TimeRange[]
   snapshotSegments: () => string
   pushHistory: (snapshotBefore: string) => void
@@ -86,11 +93,16 @@ function nonSpaceLength(text: string) {
 export function createTranscriptEditor(options: TranscriptEditorOptions) {
   const {
     root,
+    addButton,
+    addStatus,
+    video,
+    mediaDuration,
     cutButton,
     tt,
     segmentsFor,
     activeLang,
     sourceLang,
+    trackLocked,
     cutRanges,
     snapshotSegments,
     pushHistory,
@@ -161,6 +173,7 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
       setEditable(line, !fullyCut)
       line.spellcheck = false
       line.textContent = seg.text
+      if (!seg.text) line.append(document.createElement("br"))
       return line
     }
 
@@ -203,6 +216,8 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
 
   function render() {
     commitPendingEdit()
+    addStatus.textContent = ""
+    addButton.disabled = !activeLang()
     cutButton.hidden = !cutMode() || !segments().length
     const segs = segments()
     renderedLang = activeLang()
@@ -731,6 +746,48 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
 
   // ── Lines ──
 
+  function addSubtitleAtPlayhead() {
+    if (!activeLang()) return
+    video.pause()
+    const time = video.currentTime
+    if (cutAt(cutRanges(), time)) {
+      addStatus.textContent = tt("transcript.insideCut")
+      return
+    }
+    const segs = segments()
+    const slot = subtitleSlotAt(segs, time, mediaDuration())
+    if (!slot) {
+      addStatus.textContent = tt("transcript.tooShort")
+      return
+    }
+    if (slot.kind === "insert" && trackLocked()) {
+      addStatus.textContent = tt("transcript.locked")
+      return
+    }
+    addStatus.textContent = ""
+    if (slot.kind === "insert") {
+      structuralChange(() => {
+        const previous = segs[slot.covering]
+        if (previous) {
+          previous.words = wordsForDraggedBlock(previous, previous.start, time)
+          previous.end = time
+        }
+        segs.splice(slot.index, 0, { start: time, end: slot.end, text: "" })
+        render()
+      })
+    }
+    const line = lineEl(slot.index)
+    if (!line) return
+    if (cutMode()) {
+      root.focus({ preventScroll: true })
+      caretNear(slot.index, segs[slot.index].words?.length ?? 0, "before")
+    } else {
+      line.focus({ preventScroll: true })
+      setCaret(line, segs[slot.index].text ? line.childNodes.length : 0)
+    }
+    line.scrollIntoView({ block: "nearest" })
+  }
+
   function splitLine(range: Range) {
     const info = caretInfo(range)
     if (!info) return
@@ -1085,6 +1142,19 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
   // ── Events ──
 
   function wire() {
+    addButton.addEventListener("click", addSubtitleAtPlayhead)
+    video.addEventListener("seeking", () => { addStatus.textContent = "" })
+    root.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return
+      event.preventDefault()
+      if (event.repeat) return
+      if (event.shiftKey) {
+        const range = selectionRange()
+        if (range && cutMode()) splitLine(range)
+      } else {
+        addSubtitleAtPlayhead()
+      }
+    })
     // Keep the caret and selection in the transcript when toggling.
     cutButton.addEventListener("pointerdown", (event) => event.preventDefault())
     cutButton.addEventListener("click", toggleWordEdit)
@@ -1099,16 +1169,17 @@ export function createTranscriptEditor(options: TranscriptEditorOptions) {
       }
       if (
         type.startsWith("format") ||
-        type === "insertParagraph" ||
-        type === "insertLineBreak" ||
         type === "insertFromDrop" ||
         type === "deleteByDrag"
       ) {
         event.preventDefault()
-        if (type === "insertParagraph" || type === "insertLineBreak") {
-          const range = selectionRange()
-          if (range && cutMode()) splitLine(range)
-        }
+        return
+      }
+      // Virtual keyboards can send beforeinput without a physical Enter key.
+      if (type === "insertParagraph" || type === "insertLineBreak") {
+        if (event.isComposing) return
+        event.preventDefault()
+        addSubtitleAtPlayhead()
         return
       }
       if (!cutMode() || event.isComposing) return

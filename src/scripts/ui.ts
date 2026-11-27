@@ -38,6 +38,8 @@ export const ui = {
   langAddSelect: $<HTMLSelectElement>("#lang-add-select"),
   langAddStatus: $("#lang-add-status"),
   transcript: $("#transcript"),
+  transcriptAddBtn: $<HTMLButtonElement>("#transcript-add-btn"),
+  transcriptAddStatus: $("#transcript-add-status"),
   transcriptCutBtn: $<HTMLButtonElement>("#transcript-cut-btn"),
   transcriptHint: $("#transcript-hint"),
   segCount: $("#seg-count"),

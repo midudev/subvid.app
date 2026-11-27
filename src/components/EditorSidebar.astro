@@ -28,11 +28,20 @@ const t = useTranslations(Astro.currentLocale)
     >
       <Scissors />
     </button>
+    <button
+      id="transcript-add-btn"
+      type="button"
+      class="btn-ghost"
+      aria-controls="transcript"
+      title={t.client.transcript.addHint}
+    >{t.client.transcript.add}</button>
     <span id="lang-add-status" class="lang-add-status" hidden></span>
+    <span id="transcript-add-status" class="lang-add-status" data-kind="error" role="status"></span>
   </div>
   <div
     id="transcript"
     class="transcript"
+    tabindex="0"
     role="textbox"
     aria-multiline="true"
     aria-label={t.sidebar.transcriptAria}

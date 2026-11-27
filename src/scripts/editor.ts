@@ -128,7 +128,7 @@ export function createEditor(ctx: EditorContext) {
   let editorSegmentsController: ReturnType<
     typeof createEditorSegmentsController
   >;
-  const { renderTimeline, updateCaption, setWaveform } =
+  const { renderTimeline, updateCaption, setWaveform, mediaDuration } =
     createTimelineController({
       ui,
       tt,
@@ -160,11 +160,16 @@ export function createEditor(ctx: EditorContext) {
 
   const transcript = createTranscriptEditor({
     root: ui.transcript,
+    addButton: ui.transcriptAddBtn,
+    addStatus: ui.transcriptAddStatus,
+    video: ui.video,
+    mediaDuration,
     cutButton: ui.transcriptCutBtn,
     tt,
     segmentsFor: (lang) => state.segmentsByLang[lang] || [],
     activeLang: () => state.activeLang,
     sourceLang: () => state.detectedLang,
+    trackLocked: () => !!trackState(state.activeLang).locked,
     cutRanges: () => cuts,
     snapshotSegments,
     pushHistory,
