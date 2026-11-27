@@ -1,6 +1,12 @@
 import { cutAt, type TimeRange } from "@/scripts/cuts.ts"
 import { $, $$ } from "@/scripts/dom.ts"
-import { findSegmentIndexAt, formatClock, wordsForDraggedBlock } from "@/scripts/subtitles.ts"
+import {
+  findSegmentIndexAt,
+  formatClock,
+  MIN_SUBTITLE_DURATION,
+  wordsForDraggedBlock,
+  type SubtitleWord,
+} from "@/scripts/subtitles.ts"
 import { peakBetween, type Waveform } from "@/scripts/waveform.ts"
 
 type TimelineTrack = {
@@ -61,7 +67,6 @@ export function createTimelineController(options: TimelineOptions) {
     onActiveSegment,
     onPlaybackTime,
   } = options
-  const TL_MIN_DUR = 0.3
   const TL_HEADER_H = 40
   const TL_WAVE_TOP = 30
   const TL_WAVE_H = 44
@@ -75,7 +80,6 @@ export function createTimelineController(options: TimelineOptions) {
   const SCRUB_SEEK_MIN_INTERVAL = 45
   const SCRUB_SEEK_EPSILON = 0.025
   let tlPxPerSec = 90
-  let tlDuration = 0
   let tlDrag: any = null
   let scrubbing = false
   let scrubRaf = 0
@@ -150,12 +154,18 @@ export function createTimelineController(options: TimelineOptions) {
     return Math.min(start + 0.001, Math.max(start, end - 0.001))
   }
 
+  function mediaDuration(): number {
+    const duration = ui.video.duration
+    // Browser recordings can lack a duration header. The decoded audio is timed.
+    return Number.isFinite(duration) && duration > 0 ? duration : waveform?.duration ?? 0
+  }
+
   function tlTotalDuration() {
     const segEnd = getTracks().reduce((max, track) => {
       const last = track.segments[track.segments.length - 1]
       return Math.max(max, last?.end || 0)
     }, 0)
-    return Math.max(tlDuration, segEnd, 1)
+    return Math.max(mediaDuration(), segEnd, 1)
   }
 
   function renderRuler(dur: number) {
@@ -214,13 +224,14 @@ export function createTimelineController(options: TimelineOptions) {
       track.segments.forEach((seg, index) => {
         const block = document.createElement("div")
         block.className = "tl-block"
-        block.classList.toggle("is-cut", !String(seg.text || "").trim())
+        if (!seg.text?.trim() && seg.words?.some((word: SubtitleWord) => word.cut))
+          block.classList.add("is-cut")
         block.classList.toggle("is-hidden", !!track.hidden)
         block.classList.toggle("is-locked", !!track.locked)
         block.dataset.lang = track.lang
         block.dataset.index = String(index)
         block.style.left = `${seg.start * tlPxPerSec}px`
-        block.style.width = `${Math.max(TL_MIN_DUR, seg.end - seg.start) * tlPxPerSec}px`
+        block.style.width = `${Math.max(MIN_SUBTITLE_DURATION, seg.end - seg.start) * tlPxPerSec}px`
         block.innerHTML = `
       <span class="tl-handle tl-handle-l" data-edge="start"></span>
       <span class="tl-block-label">${escapeHtml(seg.text || "—")}</span>
@@ -250,7 +261,7 @@ export function createTimelineController(options: TimelineOptions) {
       const seg = segmentsByLang.get(block.dataset.lang || "")?.[Number(block.dataset.index)]
       if (!seg) continue
       block.style.left = `${seg.start * tlPxPerSec}px`
-      block.style.width = `${Math.max(TL_MIN_DUR, seg.end - seg.start) * tlPxPerSec}px`
+      block.style.width = `${Math.max(MIN_SUBTITLE_DURATION, seg.end - seg.start) * tlPxPerSec}px`
     }
 
     renderCuts()
@@ -592,7 +603,7 @@ export function createTimelineController(options: TimelineOptions) {
     const seg = segmentsForLang(lang)[index]
     if (!view || !seg) return
     const left = seg.start * tlPxPerSec
-    const right = Math.max(left + TL_MIN_DUR * tlPxPerSec, seg.end * tlPxPerSec)
+    const right = Math.max(left + MIN_SUBTITLE_DURATION * tlPxPerSec, seg.end * tlPxPerSec)
     if (
       left < view.scrollLeft + 8 ||
       right > view.scrollLeft + view.clientWidth - 8
@@ -721,10 +732,10 @@ export function createTimelineController(options: TimelineOptions) {
       } else if (mode === "start") {
         seg.start = Math.max(
           0,
-          Math.min(original.end - TL_MIN_DUR, original.start + dt),
+          Math.min(original.end - MIN_SUBTITLE_DURATION, original.start + dt),
         )
       } else {
-        seg.end = Math.max(original.start + TL_MIN_DUR, original.end + dt)
+        seg.end = Math.max(original.start + MIN_SUBTITLE_DURATION, original.end + dt)
       }
       if (original.words) {
         seg.words = wordsForDraggedBlock(original, seg.start, seg.end)
@@ -811,15 +822,13 @@ export function createTimelineController(options: TimelineOptions) {
     })
     ui.tlZoomIn?.addEventListener("click", () => zoomTimeline(1.4))
     ui.tlZoomOut?.addEventListener("click", () => zoomTimeline(1 / 1.4))
-    ui.video.addEventListener("loadedmetadata", () => {
-      tlDuration = Number.isFinite(ui.video.duration) ? ui.video.duration : 0
-      renderTimeline()
-    })
+    ui.video.addEventListener("loadedmetadata", renderTimeline)
   }
 
   wireTimeline()
 
   return {
+    mediaDuration,
     renderTimeline,
     highlightSegment,
     updateCaption,

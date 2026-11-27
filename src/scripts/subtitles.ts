@@ -31,6 +31,30 @@ type SpeechRun = {
 
 const DEFAULT_SAMPLE_RATE = 16_000
 const SILENCE_BREAK_SECONDS = 0.55
+export const MIN_SUBTITLE_DURATION = 0.3
+
+/** Locate an editable row or a free interval on a track sorted by start time. */
+export function subtitleSlotAt(
+  segments: SubtitleSegment[], time: number, duration: number,
+) {
+  if (!Number.isFinite(time) || !Number.isFinite(duration) || time < 0 || time >= duration)
+    return null
+
+  const next = segments.findIndex((seg) => seg.start > time)
+  const index = next < 0 ? segments.length : next
+  const preceding = segments[index - 1]
+  // Clicking a word or block seeks 1 ms past its start to show its first frame.
+  if (preceding && time <= preceding.start + 0.001)
+    return { kind: "existing" as const, index: index - 1 }
+
+  // A dragged block can overlap an earlier one. Shorten the row active here.
+  const covering = segments.findLastIndex((seg, i) => i < index && seg.end > time)
+  const current = segments[covering]
+  const end = Math.min(current?.end ?? time + 2, segments[index]?.start ?? duration, duration)
+  const tooShort = (length: number) => length + 1e-9 < MIN_SUBTITLE_DURATION
+  if (tooShort(end - time) || (current && tooShort(time - current.start))) return null
+  return { kind: "insert" as const, index, covering, end }
+}
 
 // Binary search for the segment containing `time` (segments are sorted by start).
 // Falls back to scanning neighbors if overlapping segments exist.

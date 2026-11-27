@@ -254,6 +254,11 @@ export const ui = {
       translatingTo: "Translating to {lang}\u2026",
       segCount: "{n} lines",
       transcript: {
+        add: "Add subtitle",
+        addHint: "Enter adds a subtitle at the playhead. Shift+Enter splits the transcription at the cursor.",
+        insideCut: "This part of the video is cut. Move the playhead outside the cut.",
+        tooShort: "There isn’t enough time here. Each subtitle needs at least 0.3 seconds.",
+        locked: "Unlock this track to add a subtitle.",
         hint: "Edit or delete text without changing the video. Turn on word editing to cut it.",
         wordEdit: "Word editing: deleting words cuts them from the video",
         wordEditHint: "Word editing on \u00B7 deleting words cuts the video.",
@@ -578,6 +583,11 @@ export const ui = {
       translatingTo: "Traduciendo a {lang}\u2026",
       segCount: "{n} líneas",
       transcript: {
+        add: "Añadir subtítulo",
+        addHint: "Enter añade un subtítulo en la posición del vídeo. Mayús+Enter divide la transcripción en el cursor.",
+        insideCut: "Esta parte del vídeo está recortada. Mueve el cabezal fuera del corte.",
+        tooShort: "Aquí falta espacio. Cada subtítulo necesita al menos 0,3 segundos.",
+        locked: "Desbloquea esta pista para añadir un subtítulo.",
         hint: "Edita o borra texto sin cambiar el vídeo. Activa la edición por palabras para recortarlo.",
         wordEdit: "Edición por palabras: borrar palabras las corta del vídeo",
         wordEditHint: "Edición por palabras activa \u00B7 borrar palabras corta el vídeo.",

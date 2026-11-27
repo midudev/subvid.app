@@ -1145,6 +1145,9 @@ video {
 .lang-add-status[data-kind="error"] {
   color: var(--danger);
 }
+.lang-add-status:empty {
+  display: none;
+}
 
 /* Word editing toggle: while on, deleting words cuts them from the video. */
 .tx-word-edit {
